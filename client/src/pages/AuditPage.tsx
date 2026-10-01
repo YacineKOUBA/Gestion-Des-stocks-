@@ -8,6 +8,13 @@ import { formatDateTime, formatNumber } from '../utils/format';
 
 const ACTIONS = ['CREATION', 'MODIFICATION', 'SUPPRESSION', 'VALIDATION', 'ANNULATION', 'REACTIVATION', 'CONNEXION'];
 
+/** Le serveur marque tout changement de mot de passe (jamais sa valeur). */
+function marqueurMotDePasse(changes: unknown): boolean {
+  if (typeof changes !== 'object' || changes === null) return false;
+  const c = changes as Record<string, unknown>;
+  return c.passwordChanged === true || c.passwordSet === true;
+}
+
 export function AuditPage() {
   const [search, setSearch] = useState('');
   const [action, setAction] = useState('');
@@ -47,7 +54,17 @@ export function AuditPage() {
     {
       key: 'changes',
       header: 'Détails',
-      render: (l) => <span className="muted mono truncate">{l.changes ? JSON.stringify(l.changes) : '—'}</span>,
+      // C4 : le journal ne contient jamais le mot de passe ni son hash, seulement
+      // le fait qu'il ait ete change. Ce marqueur est ici explicite, car dans le
+      // JSON brut il passerait inapercu (colonne tronquee, cle en fin d'objet).
+      render: (l) => (
+        <>
+          {marqueurMotDePasse(l.changes) ? (
+            <Badge tone="orange">Mot de passe modifié</Badge>
+          ) : null}
+          <span className="muted mono truncate">{l.changes ? JSON.stringify(l.changes) : '—'}</span>
+        </>
+      ),
     },
   ];
 

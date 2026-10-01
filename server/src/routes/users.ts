@@ -42,7 +42,12 @@ router.post('/', requirePermission('user:write'), async (req, res) => {
     },
     select: userSelect,
   });
-  await audit(req.user!.id, 'CREATION', 'user', String(user.id), { login: user.login });
+  // C4 : la creation d'un compte est aussi la creation de son secret.
+  // userSelect n'expose jamais passwordHash, on note donc le fait, pas la valeur.
+  await audit(req.user!.id, 'CREATION', 'user', String(user.id), {
+    login: user.login,
+    passwordSet: true,
+  });
   res.status(201).json(user);
 });
 
@@ -54,7 +59,9 @@ router.put('/:id', requirePermission('user:write'), async (req, res) => {
   if (id === req.user!.id && data.isActive === false) {
     throw badRequest('Vous ne pouvez pas désactiver votre propre compte');
   }
-  const passwordHash = data.password ? await bcrypt.hash(data.password, 10) : undefined;
+  const nouveauMotDePasse = data.password ?? '';
+  const passwordChanged = nouveauMotDePasse.length > 0;
+  const passwordHash = passwordChanged ? await bcrypt.hash(nouveauMotDePasse, 10) : undefined;
   const user = await prisma.user.update({
     where: { id },
     data: {
@@ -64,7 +71,15 @@ router.put('/:id', requirePermission('user:write'), async (req, res) => {
     },
     select: userSelect,
   });
-  await audit(req.user!.id, 'MODIFICATION', 'user', String(id), { before, after: user });
+  // C4 : `before` et `after` utilisent userSelect, qui ne contient jamais
+  // passwordHash : sans ce marqueur, un changement de mot de passe laisse une
+  // trace d'audit identique a un simple renommage du libelle. On journalise le
+  // FAIT du changement, jamais le mot de passe ni son hash.
+  await audit(req.user!.id, 'MODIFICATION', 'user', String(id), {
+    before,
+    after: user,
+    ...(passwordChanged ? { passwordChanged: true } : {}),
+  });
   res.json(user);
 });
 
