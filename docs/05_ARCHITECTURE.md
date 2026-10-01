@@ -12,7 +12,7 @@
 |---|---|
 | A1 | **TypeScript** cote serveur ET cote client (typage strict des donnees) |
 | A2 | **Prisma ORM** pour l'acces aux donnees PostgreSQL (migrations + client type) - plus de SQL ecrit a la main |
-| A3 | Authentification : login + mot de passe (hache), sessions JWT, roles ADMIN / MAGASINIER |
+| A3 | Authentification : login + mot de passe (hache), sessions JWT, **droits par profil** ADMIN / MAGASINIER / TOP_MANAGEMENT (D16) - matrice unique dans `server/src/auth/permissions.ts`, 28 permissions |
 | A4 | Bons (M8) : **en V1, l'application les enregistre tels quels (saisie des donnees, sans impression conforme)** ; reconformite prevue en V2 |
 | A5 | IA Gemini : hors V1 (V2) |
 | A6 | Hebergement uniquement sur le reseau local de l'entreprise |
@@ -35,7 +35,7 @@ Architecture **3 tiers** (monorepo) :
   |  SERVEUR LOCAL                                                |
   |  Node.js + Express.js + TypeScript ->  API REST                |
   |    - Authentification et sessions (JWT)                        |
-  |    - Controle d'acces par role (ADMIN / MAGASINIER)             |
+  |    - Controle d'acces par droit (requirePermission, D16)         |
   |    - Regles metier (mouvements, seuils, inventaire, prets...)   |
   |    - Journal d'audit (M10)                                      |
   |    - Acces aux donnees : PRISMA ORM (client type securise)      |
@@ -149,7 +149,7 @@ Prefixe commun : `/api`
 
 1. **Login** : identifiant + mot de passe stocke **hache** (bcrypt) - jamais en clair.
 2. **Sessions** : JWT delivre a la connexion, envoye a chaque requete, expiration configurable.
-3. **Roles** : middleware de controle (ADMIN ou MAGASINIER) - matrice = M11 du cahier des charges.
+3. **Droits (D16)** : le controle ne porte plus sur le role mais sur un **droit** (`requirePermission`). La matrice `ROLE_PERMISSIONS` de `server/src/auth/permissions.ts` est l'unique source de verite ; le serveur renvoie la liste des droits de l'utilisateur dans `permissions[]` sur `/auth/login` et `/auth/me`, et le client n'en recalcule aucun. Voir M11 du cahier des charges.
 4. **Acces** : le serveur n'ecoute que sur le reseau local (pas d'exposition Internet).
 5. **Audit** : toute action enregistree (M10) avec l'utilisateur connecte (middleware global).
 6. **Validation des entrees** : schemas de validation cote serveur (types + validation runtime), jamais de confiance sur le frontend.

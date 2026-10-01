@@ -104,7 +104,9 @@ Reponse : \a\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_
 2. la gestion des lot est d'un role primordial dans l'appliquation
 3. il exixte une autre categorie de produit a prendre en compte a part (Embalages/Equipements/Matieres premieres) qui est (Piece de rechenge)
 4. avoire une tracabilite de qui a ajout/supprime/modifier quoi
-## PARTIE D - PERMISSIONS DES ROLES (admin / magasinier)
+## PARTIE D - PERMISSIONS DES ROLES (admin / magasinier / direction generale)
+
+> **Mise a jour D16/D17.** Un troisieme profil, **TOP_MANAGEMENT** (« Direction generale »), a ete ajoute sur demande du directeur : consultation seule sur les 9 ecrans de pilotage, aucune saisie. Et le **magasinier a perdu l'acces aux ecrans Pret/Emprunt et Reservation** (D17). La grille ci-dessous est celle du document source, inchangee ; la version appliquee fait foi : voir M11 de `03_CAHIER_DES_CHARGES.md`.
 
 ### Le magasinier peut faire (cocher) :
 - [x] Saisir les entrees de stock

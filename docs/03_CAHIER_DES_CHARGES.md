@@ -25,6 +25,8 @@
 | D13 | Ecart assume sur M9 : le tableau de bord ne presente QUE les 7 KPI d'exploitation, sans aucun bloc « stock total ». Les trois exigences complementaires de M9 ne sont pas livrees au tableau de bord : (a) la valorisation totale du stock ; (b) le regroupement par FAMILLE ; (c) la carte « stock par categorie » (le tableau ne regroupe par categorie que dans l'onglet Valorisation et via l'endpoint /dashboard/stock-by-category). Ces trois blocs restent accessibles et exacts dans leurs onglets/API dedies | ecart doc/ecran assume |
 | D14 | Le journal d'audit n'est jamais purge (ni automatiquement ni manuellement) ; toute purge future doit etre ciblee (action, periode, motif) et tracee | regle de conservation |
 | D15 | Terminologie : le mot « partenaire » est remplacé par « ACTEUR » dans toute l'interface (libelles de champs, en-tetes de colonnes, messages d'erreur) et dans les documents 02/03/05/06. C'est le terme du fichier Excel source (colonne `ACTEUR`), « partenaire » n'en étant que la glose. `docs/01` reste inchangé : il transcrit le fichier Excel. **Le nom technique reste `Partner`** (table `partners`, modele Prisma, `partnerId`, `model: 'partner'` dans l'URL du referentiel) : aucune migration n'est necessaire | harmonisation de vocabulaire |
+| D16 | Profil **TOP_MANAGEMENT** ajoute, libelle « **Direction generale** » (le directeur l'avait ecrit « Top Managment ») : **consultation seule, aucun droit d'ecriture**, sur les 9 ecrans listes : tableau de bord, etat de stock, article, mouvement, lot et peremption, inventaire, pret/emprunt, reservation, valorisation. Ecrans **absents de la liste, donc exclus, appliques a la lettre** : Document (bons), Referentiel, Utilisateurs, Parametres, et **Journal d'audit** — ce dernier point n'a pas ete souleve aupres du directeur. Le profil recoit 9 des 28 droits, soit **strictement moins que le `MAGASINIER`** (12) : aucun acces nouveau n'est cree pour qui que ce soit, et le nouveau profil ne peut rien ecrire | demande directeur |
+| D17 | Le profil **MAGASINIER perd l'acces aux ecrans Pret/Emprunt et Reservation** (retrait de `loan:read`, `loan:write`, `reservation:read`, `reservation:write`) : il passe de 15 a 12 droits. Consequences appliques : (a) la carte « Prets / emprunts en cours » du tableau de bord n'est plus interrogee ni affichee pour ce profil, faute de quoi l'appel echouerait en 403 ; (b) le champ `prets` de `/dashboard/alerts`, **non consomme par aucun ecran**, est supprime, sinon les prets lui parviendraient malgre le retrait d'acces. **Regression D16 corrigee** : `referential:read` lui est rendu (ses formulaires de saisie de mouvement et de bon lisent depots, emplacements et acteurs ; sans ce droit ils etaient casses), et un nouveau droit `referential:manage` separe la *lecture des listes* de l'*acces a l'ecran Referentiel*, qui reste absent de son menu comme avant | demande directeur |
 | C1 | Traçabilite des inventaires et declaration des pertes | doc2 |
 | C2 | Gestion des lots : role primordial | doc2 |
 | C3 | Nouvelle categorie d'article : PIECE DE RECHANGE (en plus d'EMBALLAGE, EQUIPEMENT, MATIERE PREMIERE) | doc2 |
@@ -63,7 +65,7 @@ Objectif : fiabiliser et centraliser la gestion de stock avec :
 | M8 | Bons de sortie/transfert (enregistrement simple V1, reconformite V2) |
 | M9 | Tableau de bord (KPIs et alertes) |
 | M10 | Traçabilite / journal d'audit |
-| M11 | Utilisateurs et roles (Admin / Magasinier) |
+| M11 | Utilisateurs, profils et droits (Admin / Magasinier / Direction generale) |
 | M12 | Parametres et referentiels (admin) |
 | M13 | Reservations de stock (blocage FEFO, validation / annulation / expiration) |
 
@@ -292,7 +294,7 @@ Note : le coefficient "x 1,05" present dans l'ETAT DES STOCKS Excel est conserve
   - expiration entre 6 mois et 1 an -> **DRAPEAU ORANGE** ;
   - expiration a plus d'un an -> **DRAPEAU VERT** ;
 - Campagne d'inventaire du mois en cours ou en retard ;
-- Prets/emprunts en solde non restitue.
+- Prets/emprunts en solde non restitue. **Carte affichee uniquement aux profils ayant le droit `loan:read`** (`ADMIN` et `TOP_MANAGEMENT`) : le `MAGASINIER` n'y a plus acces depuis D17. Le doublon `prets` que `/dashboard/alerts` renvoyait a cote de la carte a ete supprime.
 
 ---
 
@@ -317,25 +319,40 @@ Note : le coefficient "x 1,05" present dans l'ETAT DES STOCKS Excel est conserve
 
 ---
 
-### M11 - UTILISATEURS ET ROLES (P1, P2)
+### M11 - UTILISATEURS ET ROLES (P1, P2, D16, D17)
 
-| Fonction | MAGASINIER | ADMIN |
-|---|---|---|
-| Saisir entrees de stock | OUI | OUI |
-| Saisir sorties de stock | OUI | OUI |
-| Consulter l'etat des stocks | OUI | OUI |
-| Saisir l'inventaire physique | OUI | OUI |
-| Creer / modifier des articles | NON | OUI |
-| Valider / annuler un mouvement | NON | OUI |
-| Ouvrir / valider une campagne d'inventaire | NON | OUI |
-| Gerer les utilisateurs et roles | NON | OUI |
-| Modifier les parametres et referentiels | NON | OUI |
-| Consulter la valorisation et les rapports | NON (sauf etat stock) | OUI |
-| Consulter le journal d'audit | NON | OUI |
-| Gerer les prets/emprunts | CONSIGNATION | VALIDATION |
-| Gerer les reservations de stock | OUI | OUI |
+Trois profils. `ADMIN` et `MAGASINIER` viennent de P1/P2 ; `TOP_MANAGEMENT` a ete ajoute en **D16** sur demande du directeur general, et les droits du `MAGASINIER` ont ete retranches en **D17**.
+
+| Fonction | MAGASINIER | ADMIN | TOP_MANAGEMENT |
+|---|---|---|---|
+| Consulter le tableau de bord | OUI | OUI | OUI (lecture) |
+| Consulter l'etat des stocks | OUI | OUI | OUI |
+| Consulter les articles | OUI | OUI | OUI |
+| Creer / modifier des articles | NON | OUI | NON |
+| Saisir entrees et sorties de stock | OUI | OUI | NON |
+| Annuler / reactiver / supprimer un mouvement | NON | OUI | NON |
+| Gerer les lots et les peremptions | OUI | OUI | CONSULTATION |
+| Consulter un inventaire | OUI | OUI | OUI |
+| Saisir le comptage de l'inventaire physique | OUI | OUI | NON |
+| Ouvrir / decider une campagne d'inventaire | NON | OUI | NON |
+| Gerer les prets / emprunts | **NON (D17)** | OUI | CONSULTATION (D16) |
+| Gerer les reservations de stock | **NON (D17)** | OUI | CONSULTATION (D16) |
+| Gerer les bons (ecran Document) | OUI | OUI | NON (D16) |
+| Consulter la valorisation | NON | OUI | OUI (D16) |
+| Gerer les utilisateurs et roles | NON | OUI | NON (D16) |
+| Gerer l'ecran Referentiel | NON | OUI | NON (D16) |
+| Modifier les parametres | NON | OUI | NON (D16) |
+| Consulter le journal d'audit | NON | OUI | NON (D16) |
+
+**Droits servis par l'API :** **28** pour `ADMIN`, **12** pour `MAGASINIER`, **9** pour `TOP_MANAGEMENT`.
+
+**Mise en oeuvre (D16/D17).** Les droits sont definis en un seul endroit, `server/src/auth/permissions.ts` (matrice `ROLE_PERMISSIONS`, 28 permissions), et appliques par le middleware `requirePermission`, qui remplace l'ancien `requireRole`. Le serveur les renvoie dans `permissions[]` sur `/auth/login` et `/auth/me` : **le client ne recalcule aucun droit**, il consomme la reponse et pose une garde `RequirePermission` par ecran. La granularite est volontairement fine, pour reproduire a l'identique les droits reels du `MAGASINIER` : `movement:write` (saisie) est distinct de `movement:revise` (annuler / reactiver / supprimer) ; `inventory:count`, `inventory:write` et `inventory:decide` sont distincts.
+
+**Trois droits de referentiel, trois intentions.** `referential:read` = lire les listes de reference ; `referential:manage` = acceder a l'ecran Referentiel ; `referential:write` = creer / supprimer une reference. `MAGASINIER` possede `referential:read` **sans** `referential:manage` : ses formulaires de saisie de mouvement et de bon ont besoin de lire les depots, emplacements et acteurs, mais l'ecran Referentiel reste absent de son menu, comme avant D16.
 
 **Authentification :** login + mot de passe hache (jamais en clair), sessions ; acces depuis le reseau local uniquement.
+
+Comptes de demonstration : `admin` / `admin2026`, `magasinier` / `magasinier2026`, `direction` / `direction2026` (profil `TOP_MANAGEMENT`).
 
 ---
 
@@ -410,7 +427,7 @@ Toute modification est tracee (C4).
 - M6 : RESTITUTION = 2 sous-types (RESTITUTION PRET / RESTITUTION EMPRUNT) rattaches a l'operation d'origine.
 - M9 : tableau de bord par lot avec drapeaux : < 6 mois = ROUGE, 6-12 mois = ORANGE, > 1 an = VERT.
 - A1/A2 : developpement en **TypeScript** (front + back) avec **Prisma ORM** (modele de donnees = source de verite).
-- A3 : authentification login + mot de passe (hache) + JWT, roles ADMIN / MAGASINIER.
+- A3 : authentification login + mot de passe (hache) + JWT, **droits par profil** ADMIN / MAGASINIER / TOP_MANAGEMENT (D16).
 - A4 : bons (M8) enregistres tels quels en V1, sans impression conforme ; reconformite en V2.
 - A5 : IA Gemini hors V1 (V2).
 - A6 : hebergement reseau local uniquement.

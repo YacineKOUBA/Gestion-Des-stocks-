@@ -65,6 +65,7 @@ datasource db {
 enum RoleCode {
   ADMIN
   MAGASINIER
+  TOP_MANAGEMENT   // D16 : profil « Direction generale », consultation seule
 }
 
 enum PartnerType {
