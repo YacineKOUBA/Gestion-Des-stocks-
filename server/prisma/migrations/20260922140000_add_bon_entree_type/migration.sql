@@ -1,0 +1,1 @@
+ALTER TYPE "BonType" ADD VALUE 'ENTREE';
