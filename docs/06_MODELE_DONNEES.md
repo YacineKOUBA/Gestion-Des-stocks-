@@ -66,6 +66,7 @@ enum RoleCode {
   ADMIN
   MAGASINIER
   TOP_MANAGEMENT   // D16 : profil « Direction generale », consultation seule
+  SALES_ADMIN      // D19 : profil « Administration des ventes », reservations sans validation
 }
 
 enum PartnerType {

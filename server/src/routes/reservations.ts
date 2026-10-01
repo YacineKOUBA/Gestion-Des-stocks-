@@ -39,7 +39,10 @@ router.post('/', requirePermission('reservation:write'), async (req, res) => {
 
 // Cas 2 : l'utilisateur valide -> l'acteur a recupere sa reservation, les articles
 // sortent reellement (tracee comme une VALIDATION dans le journal d'audit).
-router.post('/:id/valider', requirePermission('reservation:write'), async (req, res) => {
+// `reservation:decide` et non `reservation:write` : la validation autorise une
+// sortie physique du stock, ce n'est pas une simple gestion de la reservation.
+// Elle reste donc separee de la creation et de l'annulation (D19).
+router.post('/:id/valider', requirePermission('reservation:decide'), async (req, res) => {
   res.json(await reservationService.validateReservation(toBigInt(req.params.id), req.user!.id));
 });
 

@@ -42,13 +42,42 @@ export function RequireAuth() {
 }
 
 /**
+ * Premier ecran que le profil a le droit d'ouvrir, dans l'ordre du menu.
+ * Renvoie null si le profil n'a le droit de rien voir.
+ *
+ * D19 : necessaire parce qu'un profil peut ne pas avoir `dashboard:read`. La
+ * page d'accueil '/' exige precisement ce droit : rediriger en dur vers '/'
+ * faisait boucler ce profil entre la garde et la page refusee.
+ */
+export function firstAllowedPath(can: (permission: Permission) => boolean): string | null {
+  return NAV_ITEMS.find((item) => can(item.permission))?.to ?? null;
+}
+
+function Forbidden() {
+  return (
+    <div className="centered">
+      <div className="card">
+        <h1>Accès refusé</h1>
+        <p className="muted">
+          Votre profil ne donne accès à aucun écran. Contactez l'administrateur si vous pensez qu'il
+          s'agit d'une erreur.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/**
  * Garde de route par droit (D16). Remplace `RequireAdmin`, qui ne pouvait
  * distinguer que deux profils. Le message est volontairement sobre : le menu
  * ne propose deja pas l'ecran, on n'est ici que face a une URL saisie a la main.
  */
 export function RequirePermission({ permission }: { permission: Permission }) {
   const { can } = useAuth();
-  if (!can(permission)) return <Navigate to="/" replace />;
+  if (!can(permission)) {
+    const repli = firstAllowedPath(can);
+    return repli ? <Navigate to={repli} replace /> : <Forbidden />;
+  }
   return <Outlet />;
 }
 

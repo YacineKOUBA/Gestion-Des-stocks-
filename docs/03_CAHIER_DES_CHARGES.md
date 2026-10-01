@@ -28,6 +28,7 @@
 | D16 | Profil **TOP_MANAGEMENT** ajoute, libelle « **Direction generale** » (le directeur l'avait ecrit « Top Managment ») : **consultation seule, aucun droit d'ecriture**, sur les 9 ecrans listes : tableau de bord, etat de stock, article, mouvement, lot et peremption, inventaire, pret/emprunt, reservation, valorisation. Ecrans **absents de la liste, donc exclus, appliques a la lettre** : Document (bons), Referentiel, Utilisateurs, Parametres, et **Journal d'audit** — ce dernier point n'a pas ete souleve aupres du directeur. Le profil recoit 9 des 28 droits, soit **strictement moins que le `MAGASINIER`** (12) : aucun acces nouveau n'est cree pour qui que ce soit, et le nouveau profil ne peut rien ecrire | demande directeur |
 | D17 | Le profil **MAGASINIER perd l'acces aux ecrans Pret/Emprunt et Reservation** (retrait de `loan:read`, `loan:write`, `reservation:read`, `reservation:write`) : il passe de 15 a 12 droits. Consequences appliques : (a) la carte « Prets / emprunts en cours » du tableau de bord n'est plus interrogee ni affichee pour ce profil, faute de quoi l'appel echouerait en 403 ; (b) le champ `prets` de `/dashboard/alerts`, **non consomme par aucun ecran**, est supprime, sinon les prets lui parviendraient malgre le retrait d'acces. **Regression D16 corrigee** : `referential:read` lui est rendu (ses formulaires de saisie de mouvement et de bon lisent depots, emplacements et acteurs ; sans ce droit ils etaient casses), et un nouveau droit `referential:manage` separe la *lecture des listes* de l'*acces a l'ecran Referentiel*, qui reste absent de son menu comme avant | demande directeur |
 | D18 | **Correction de C4 sur les secrets.** Un changement de mot de passe etait INVISIBLE dans le journal d'audit : `userSelect` n'expose jamais `passwordHash`, donc les champs `before`/`after` etaient rigoureusement identiques a ceux d'un simple renommage du libelle. Les routes `/users` journalisent desormais un marqueur explicite — `passwordSet: true` a la creation, `passwordChanged: true` a la modification — present uniquement lorsqu'un secret est reellement pose ou remplace, et l'ecran Journal d'audit l'affiche en badge « Mot de passe modifie » (dans le JSON tronque de la colonne « Details », il passerait inapercu). **Le secret lui-meme n'est toujours nulle part trace** : ni en base, ni dans le journal, ni a l'ecran | correction de C4 |
+| D19 | Profil **SALES_ADMIN** ajoute, libelle « **Administration des ventes** ». Cinq ecrans demandes : etat de stock, article, mouvement, lot et peremption, **en lecture seule**, plus l'ecran Reservation **en lecture et en ecriture**. Deux points ont ete arbitres avec le directeur. (a) La formule « en ecriture (consulting) seulement » est **contradictoire** ; c'est la *consultation seule* qui a ete retenue, seul sens coherent — et de fait **l'ecran Etat de stock n'a aucune ecriture** : son stock est recalcule depuis les mouvements, `stock.ts` ne contient que `requirePermission('stock:read')`. (b) Sur Reservation, le directeur a precise **creer et annuler, mais pas valider**. D'ou un droit supplementaire : **`reservation:decide` separe de `reservation:write`**, car la validation transforme les mouvements de blocage en SORTIES et autorise donc une sortie reelle du stock ; elle n'etait pas couverte par la demande « modification ». **Corollaire** : la garde `RequirePermission` ne redirige plus en dur vers `/` mais vers le **premier ecran autorise** du menu, sinon ce profil — le premier a ne pas avoir `dashboard:read` — bouclait sur la page d'accueil, qui exige precisement le droit qu'il n'a pas. `referential:read` lui est accorde : le filtre Categorie, le filtre Depot et le formulaire de reservation en dependent ; il n'a ni `referential:manage` ni `referential:write` | demande directeur |
 | C1 | Traçabilite des inventaires et declaration des pertes | doc2 |
 | C2 | Gestion des lots : role primordial | doc2 |
 | C3 | Nouvelle categorie d'article : PIECE DE RECHANGE (en plus d'EMBALLAGE, EQUIPEMENT, MATIERE PREMIERE) | doc2 |
@@ -321,40 +322,44 @@ Note : le coefficient "x 1,05" present dans l'ETAT DES STOCKS Excel est conserve
 
 ---
 
-### M11 - UTILISATEURS ET ROLES (P1, P2, D16, D17)
+### M11 - UTILISATEURS ET ROLES (P1, P2, D16, D17, D19)
 
-Trois profils. `ADMIN` et `MAGASINIER` viennent de P1/P2 ; `TOP_MANAGEMENT` a ete ajoute en **D16** sur demande du directeur general, et les droits du `MAGASINIER` ont ete retranches en **D17**.
+Quatre profils. `ADMIN` et `MAGASINIER` viennent de P1/P2 ; `TOP_MANAGEMENT` a ete ajoute en **D16** sur demande du directeur general, les droits du `MAGASINIER` ont ete retranches en **D17**, et `SALES_ADMIN` a ete ajoute en **D19**.
 
-| Fonction | MAGASINIER | ADMIN | TOP_MANAGEMENT |
-|---|---|---|---|
-| Consulter le tableau de bord | OUI | OUI | OUI (lecture) |
-| Consulter l'etat des stocks | OUI | OUI | OUI |
-| Consulter les articles | OUI | OUI | OUI |
-| Creer / modifier des articles | NON | OUI | NON |
-| Saisir entrees et sorties de stock | OUI | OUI | NON |
-| Annuler / reactiver / supprimer un mouvement | NON | OUI | NON |
-| Gerer les lots et les peremptions | OUI | OUI | CONSULTATION |
-| Consulter un inventaire | OUI | OUI | OUI |
-| Saisir le comptage de l'inventaire physique | OUI | OUI | NON |
-| Ouvrir / decider une campagne d'inventaire | NON | OUI | NON |
-| Gerer les prets / emprunts | **NON (D17)** | OUI | CONSULTATION (D16) |
-| Gerer les reservations de stock | **NON (D17)** | OUI | CONSULTATION (D16) |
-| Gerer les bons (ecran Document) | OUI | OUI | NON (D16) |
-| Consulter la valorisation | NON | OUI | OUI (D16) |
-| Gerer les utilisateurs et roles | NON | OUI | NON (D16) |
-| Gerer l'ecran Referentiel | NON | OUI | NON (D16) |
-| Modifier les parametres | NON | OUI | NON (D16) |
-| Consulter le journal d'audit | NON | OUI | NON (D16) |
+| Fonction | MAGASINIER | ADMIN | TOP_MANAGEMENT | SALES_ADMIN |
+|---|---|---|---|---|
+| Consulter le tableau de bord | OUI | OUI | OUI (lecture) | **NON (D19)** |
+| Consulter l'etat des stocks | OUI | OUI | OUI | OUI (D19) |
+| Consulter les articles | OUI | OUI | OUI | OUI (D19) |
+| Creer / modifier des articles | NON | OUI | NON | **NON (D19)** |
+| Saisir entrees et sorties de stock | OUI | OUI | NON | **NON (D19)** |
+| Annuler / reactiver / supprimer un mouvement | NON | OUI | NON | **NON (D19)** |
+| Gerer les lots et les peremptions | OUI | OUI | CONSULTATION | CONSULTATION (D19) |
+| Consulter un inventaire | OUI | OUI | OUI | **NON (D19)** |
+| Saisir le comptage de l'inventaire physique | OUI | OUI | NON | NON |
+| Ouvrir / decider une campagne d'inventaire | NON | OUI | NON | NON |
+| Gerer les prets / emprunts | **NON (D17)** | OUI | CONSULTATION (D16) | **NON (D19)** |
+| Gerer les reservations de stock | **NON (D17)** | OUI | CONSULTATION (D16) | creer + annuler, **sans valider** (D19) |
+| Gerer les bons (ecran Document) | OUI | OUI | NON (D16) | **NON (D19)** |
+| Consulter la valorisation | NON | OUI | OUI (D16) | **NON (D19)** |
+| Gerer les utilisateurs et roles | NON | OUI | NON (D16) | **NON (D19)** |
+| Gerer l'ecran Referentiel | NON | OUI | NON (D16) | **NON (D19)** |
+| Modifier les parametres | NON | OUI | NON (D16) | **NON (D19)** |
+| Consulter le journal d'audit | NON | OUI | NON (D16) | **NON (D19)** |
 
-**Droits servis par l'API :** **28** pour `ADMIN`, **12** pour `MAGASINIER`, **9** pour `TOP_MANAGEMENT`.
+**Droits servis par l'API :** **29** pour `ADMIN`, **12** pour `MAGASINIER`, **9** pour `TOP_MANAGEMENT`, **7** pour `SALES_ADMIN`.
 
-**Mise en oeuvre (D16/D17).** Les droits sont definis en un seul endroit, `server/src/auth/permissions.ts` (matrice `ROLE_PERMISSIONS`, 28 permissions), et appliques par le middleware `requirePermission`, qui remplace l'ancien `requireRole`. Le serveur les renvoie dans `permissions[]` sur `/auth/login` et `/auth/me` : **le client ne recalcule aucun droit**, il consomme la reponse et pose une garde `RequirePermission` par ecran. La granularite est volontairement fine, pour reproduire a l'identique les droits reels du `MAGASINIER` : `movement:write` (saisie) est distinct de `movement:revise` (annuler / reactiver / supprimer) ; `inventory:count`, `inventory:write` et `inventory:decide` sont distincts.
+**Mise en oeuvre (D16/D17/D19).** Les droits sont definis en un seul endroit, `server/src/auth/permissions.ts` (matrice `ROLE_PERMISSIONS`, 29 permissions), et appliques par le middleware `requirePermission`, qui remplace l'ancien `requireRole`. Le serveur les renvoie dans `permissions[]` sur `/auth/login` et `/auth/me` : **le client ne recalcule aucun droit**, il consomme la reponse et pose une garde `RequirePermission` par ecran. La granularite est volontairement fine, pour reproduire a l'identique les droits reels : `movement:write` (saisie) est distinct de `movement:revise` (annuler / reactiver / supprimer) ; `inventory:count`, `inventory:write` et `inventory:decide` sont distincts ; `reservation:write` (creer, annuler) est distinct de **`reservation:decide` (valider, D19)**.
 
-**Trois droits de referentiel, trois intentions.** `referential:read` = lire les listes de reference ; `referential:manage` = acceder a l'ecran Referentiel ; `referential:write` = creer / supprimer une reference. `MAGASINIER` possede `referential:read` **sans** `referential:manage` : ses formulaires de saisie de mouvement et de bon ont besoin de lire les depots, emplacements et acteurs, mais l'ecran Referentiel reste absent de son menu, comme avant D16.
+**Trois droits de referentiel, trois intentions.** `referential:read` = lire les listes de reference ; `referential:manage` = acceder a l'ecran Referentiel ; `referential:write` = creer / supprimer une reference. `MAGASINIER` et `SALES_ADMIN` possedent `referential:read` **sans** `referential:manage` : leurs formulaires ont besoin de lire les depots, emplacements et acteurs, mais l'ecran Referentiel reste absent de leur menu.
+
+**Une ecriture de reservation, deux intentions (D19).** `reservation:write` couvre la creation et l'annulation, qui rend le stock. `reservation:decide` couvre la seule validation, qui transforme les mouvements de blocage en **SORTIES** : elle autorise une sortie physique du stock et n'a donc pas ete assimilee a une gestion de reservation. Le module Reservation ne comporte aucune operation de modification (ni `PUT` ni `PATCH`) : creer, valider et annuler sont ses trois seules ecritures.
+
+**Redirection vers le premier ecran autorise (D19).** `RequirePermission` ne renvoie plus en dur vers `/`. Il redirige vers le **premier ecran du menu que le profil a le droit d'ouvrir** (`firstAllowedPath`), et affiche un ecran « Acces refuse » si le profil n'a droit a rien. Sans cela, un profil sans `dashboard:read` boucle : la page d'accueil exige le droit qui lui manque. `LoginPage` va directement a cet ecran apres connexion, sans passer par la garde.
 
 **Authentification :** login + mot de passe hache (jamais en clair), sessions ; acces depuis le reseau local uniquement.
 
-Comptes de demonstration : `admin` / `admin2026`, `magasinier` / `magasinier2026`, `direction` / `direction2026` (profil `TOP_MANAGEMENT`).
+Comptes de demonstration : `admin` / `admin2026`, `magasinier` / `magasinier2026`, `direction` / `direction2026` (profil `TOP_MANAGEMENT`), `ventes` / `ventes2026` (profil `SALES_ADMIN`).
 
 ---
 
@@ -383,8 +388,8 @@ Toute modification est tracee (C4).
 3. Le blocage suit le **FEFO** : les lots sont pris dans l'ordre de peremption croissante, et le dernier lot preleve peut etre partiel.
 4. Chaque part bloquee genere un mouvement de type **RESERVATION** (sens -1) rattache a la reservation : le **stock disponible diminue immediatement**, comme pour une sortie ou un pret. La marchandise reste physiquement dans le depot.
 5. Une reservation **active** bloque le stock jusqu'a sa date de fin. Trois issues possibles :
-   - **Validation** (`REALISE`) : l'acteur a recupere sa reservation, les articles sortent reellement. Les mouvements de blocage **passent en SORTIE** ; ils restent dates du jour de la creation de la reservation et lui restent rattaches.
-   - **Annulation manuelle** (`ANNULE`) : le stock est immediatement rendu, les mouvements de blocage etant annules donc ignores par le calcul de stock.
+   - **Validation** (`REALISE`) : l'acteur a recupere sa reservation, les articles sortent reellement. Les mouvements de blocage **passent en SORTIE** ; ils restent dates du jour de la creation de la reservation et lui restent rattaches. **Droit `reservation:decide`, distinct de `reservation:write` (D19)** : la validation autorise une sortie physique du stock, elle n'est donc pas assimilee a une gestion de reservation.
+   - **Annulation manuelle** (`ANNULE`) : le stock est immediatement rendu, les mouvements de blocage etant annules donc ignores par le calcul de stock. Droit `reservation:write`.
    - **Expiration** (`EXPIRE`) : au-dela de la date de fin, le stock est rendu automatiquement. Le balayage est idempotent et s'execute au demarrage du serveur puis toutes les heures.
 6. Une reservation cloturee n'est plus modifiable. Sa date de cloture, son motif (`VALIDEE`, `MANUEL`, `EXPIRE`) et l'utilisateur qui l'a cloturee sont conserves.
 7. Le personne concernee est saisie librement ; si le texte saisi correspond a un compte utilisateur, le lien avec ce compte est conserve.

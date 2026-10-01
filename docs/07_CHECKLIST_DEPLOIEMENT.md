@@ -212,11 +212,25 @@ Toutes les corrections ont porte sur le code et la documentation.
 
 ## 5. COMPTES DE LA DEMONSTRATION
 
-| Compte | Mot de passe |
-|---|---|
-| `admin` | `admin2026` |
-| `magasinier` | `magasinier2026` |
+| Compte | Mot de passe | Profil | Ecran d'accueil |
+|---|---|---|---|
+| `admin` | `admin2026` | `ADMIN` — 29 droits | Tableau de bord |
+| `magasinier` | `magasinier2026` | `MAGASINIER` — 12 droits | Tableau de bord |
+| `direction` | `direction2026` | `TOP_MANAGEMENT` — 9 droits | Tableau de bord |
+| `ventes` | `ventes2026` | `SALES_ADMIN` — 7 droits | **Etat de stock** (D19) |
 
 Les mots de passe sont volontairement identiques et documentes ici : c'est un jeu de
 demonstration, pas un environnement de production. **Ils sont a changer a l'installation
 reelle**, ainsi que `JWT_SECRET` (`.env`).
+
+**Comptes `direction` et `ventes` : ils ne sont pas crees par le seed.** Ils ont ete
+crees via l'ecran Utilisateurs apres les migrations D16 et D19. Sur une base neuve,
+`prisma migrate deploy` insere les lignes de Role, mais les comptes restent a creer a la
+main depuis l'ecran Utilisateurs (ou `POST /users`). C'est le seul ecran qui permette de
+creer un compte : les deux profils ne peuvent pas se creer eux-memes.
+
+**Verifier `ventes` a la demonstration** (D19) : le menu doit afficher exactement
+5 entrees (Etat de stock, Article, Mouvement, Lots & peremptions, Reservation) et la
+connexion doit atterrir sur **Etat de stock**, pas sur le tableau de bord. Sur une
+reservation `ACTIF`, le bouton **Annuler** est present et le bouton **Valider** est
+absent ; c'est la difference visible entre `reservation:write` et `reservation:decide`.

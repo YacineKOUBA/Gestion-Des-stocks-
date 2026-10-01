@@ -26,6 +26,13 @@ async function main() {
     create: { code: RoleCode.TOP_MANAGEMENT, label: 'Direction générale' },
   });
   void roleTop;
+  // D19 : administration des ventes. Meme demarche que le profil du dessus.
+  const roleVentes = await prisma.role.upsert({
+    where: { code: RoleCode.SALES_ADMIN },
+    update: {},
+    create: { code: RoleCode.SALES_ADMIN, label: 'Administration des ventes' },
+  });
+  void roleVentes;
 
   // ---- Utilisateurs initiaux ----
   const adminHash = await bcrypt.hash('admin2026', 10);

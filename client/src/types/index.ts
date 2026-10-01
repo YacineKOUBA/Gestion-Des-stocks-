@@ -1,4 +1,4 @@
-export type RoleCode = 'ADMIN' | 'MAGASINIER' | 'TOP_MANAGEMENT';
+export type RoleCode = 'ADMIN' | 'MAGASINIER' | 'TOP_MANAGEMENT' | 'SALES_ADMIN';
 
 /**
  * Droits de l'application (D16).
@@ -27,6 +27,7 @@ export type Permission =
   | 'loan:write'
   | 'reservation:read'
   | 'reservation:write'
+  | 'reservation:decide'
   | 'bon:read'
   | 'bon:write'
   | 'valuation:read'

@@ -27,6 +27,12 @@ import type { RoleCode } from '@prisma/client';
  * - `referential:manage`   acces a l'ECRAN Referentiel (liste + ajout/suppression).
  *                          Distinct de `read` : un profil peut avoir besoin des
  *                          listes pour travailler sans pour autant gerer le referentiel.
+ * - `reservation:write`    creation d'une reservation, et ANNULATION (le stock est
+ *                          immediatement rendu)
+ * - `reservation:decide`   VALIDATION d'une reservation. Scinde de `write` car la
+ *                          validation transforme les mouvements de blocage en
+ *                          SORTIES : elle autorise une sortie reelle du stock.
+ *                          Le module Reservation n'a pas d'autre ecriture.
  * - `settings:read`        consultation des seuils et constantes
  */
 export const PERMISSIONS = [
@@ -47,6 +53,7 @@ export const PERMISSIONS = [
   'loan:write',
   'reservation:read',
   'reservation:write',
+  'reservation:decide',
   'bon:read',
   'bon:write',
   'valuation:read',
@@ -112,10 +119,46 @@ const TOP_MANAGEMENT_PERMISSIONS: Permission[] = [
   'valuation:read',
 ];
 
+/**
+ * SALES_ADMIN : administration des ventes (D19).
+ *
+ * Cinq ecrans demandes par le directeur : etat de stock, articles, mouvement,
+ * lots et peremption, en LECTURE SEULE, plus l'ecran Reservation en lecture et
+ * en ecriture.
+ *
+ * Sur Reservation il peut creer et annuler, mais PAS valider : la validation
+ * transforme les mouvements de blocage en SORTIES et autorise donc une sortie
+ * reelle du stock. D'ou le droit distinct `reservation:decide`, qu'il n'a pas.
+ *
+ * `referential:read` lui est accorde malgre l'absence de l'ecran Referentiel :
+ * le filtre Categorie de l'ecran Article, le filtre Depot de l'ecran Mouvement
+ * et le formulaire de Reservation (choix de l'acteur) en dependent. Il n'a ni
+ * `referential:manage` ni `referential:write`.
+ *
+ * Aucun droit d'ecriture sur articles, mouvements et lots. Aucun acces au
+ * tableau de bord, a l'inventaire, aux prets/emprunts, aux bons, a la
+ * valorisation, aux utilisateurs, aux parametres ni au journal d'audit : ces
+ * ecrans ne figuraient pas dans la demande.
+ *
+ * Il n'a PAS `dashboard:read`, et c'est voulu. La redirection vers le premier
+ * ecran autorise remplace l'ancien renvoi en dur vers '/' : sans cela, ce profil
+ * boucle sur la page d'accueil, qui exige precisement le droit qu'il n'a pas.
+ */
+const SALES_ADMIN_PERMISSIONS: Permission[] = [
+  'stock:read',
+  'article:read',
+  'movement:read',
+  'lot:read',
+  'referential:read',
+  'reservation:read',
+  'reservation:write',
+];
+
 export const ROLE_PERMISSIONS: Record<RoleCode, readonly Permission[]> = {
   ADMIN: ADMIN_PERMISSIONS,
   MAGASINIER: MAGASINIER_PERMISSIONS,
   TOP_MANAGEMENT: TOP_MANAGEMENT_PERMISSIONS,
+  SALES_ADMIN: SALES_ADMIN_PERMISSIONS,
 };
 
 /** Droits effectivement accordes a un role. */

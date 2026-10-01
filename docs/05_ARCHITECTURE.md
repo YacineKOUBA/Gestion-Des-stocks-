@@ -149,11 +149,12 @@ Prefixe commun : `/api`
 
 1. **Login** : identifiant + mot de passe stocke **hache** (bcrypt) - jamais en clair.
 2. **Sessions** : JWT delivre a la connexion, envoye a chaque requete, expiration configurable.
-3. **Droits (D16)** : le controle ne porte plus sur le role mais sur un **droit** (`requirePermission`). La matrice `ROLE_PERMISSIONS` de `server/src/auth/permissions.ts` est l'unique source de verite ; le serveur renvoie la liste des droits de l'utilisateur dans `permissions[]` sur `/auth/login` et `/auth/me`, et le client n'en recalcule aucun. Voir M11 du cahier des charges.
-4. **Acces** : le serveur n'ecoute que sur le reseau local (pas d'exposition Internet).
-5. **Audit** : toute action enregistree (M10) avec l'utilisateur connecte (middleware global).
-6. **Validation des entrees** : schemas de validation cote serveur (types + validation runtime), jamais de confiance sur le frontend.
-7. **Secrets** : fichier `.env` non committe (DATABASE_URL, JWT_SECRET).
+3. **Droits (D16, D19)** : le controle ne porte plus sur le role mais sur un **droit** (`requirePermission`). La matrice `ROLE_PERMISSIONS` de `server/src/auth/permissions.ts` est l'unique source de verite ; le serveur renvoie la liste des droits de l'utilisateur dans `permissions[]` sur `/auth/login` et `/auth/me`, et le client n'en recalcule aucun. Voir M11 du cahier des charges.
+4. **Redirection d'ecran (D19)** : la garde `RequirePermission` redirige vers le **premier ecran autorise** du menu (`firstAllowedPath`), jamais en dur vers `/`. Un profil sans `dashboard:read` bouclerait sinon sur la page d'accueil, qui exige le droit qui lui manque. Si le profil n'a droit a aucun ecran, un ecran « Acces refuse » est affiche plutot qu'une boucle.
+5. **Acces** : le serveur n'ecoute que sur le reseau local (pas d'exposition Internet).
+6. **Audit** : toute action enregistree (M10) avec l'utilisateur connecte (middleware global).
+7. **Validation des entrees** : schemas de validation cote serveur (types + validation runtime), jamais de confiance sur le frontend.
+8. **Secrets** : fichier `.env` non committe (DATABASE_URL, JWT_SECRET).
 
 ---
 

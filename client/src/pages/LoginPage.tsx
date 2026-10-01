@@ -3,9 +3,10 @@ import { Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { errorMessage } from '../hooks/useAsync';
 import { ErrorMessage } from '../components/ui';
+import { firstAllowedPath } from '../components/Layout';
 
 export function LoginPage() {
-  const { user, signIn } = useAuth();
+  const { user, signIn, can } = useAuth();
   const navigate = useNavigate();
   const [login, setLogin] = useState('');
   const [password, setPassword] = useState('');
@@ -21,7 +22,10 @@ export function LoginPage() {
     setError(null);
     try {
       await signIn(login, password);
-      navigate('/');
+      // D19 : tous les profils n'ont pas le tableau de bord. On va directement
+      // sur leur premier ecran autorise plutot que de laisser la garde de route
+      // rediriger apres coup.
+      navigate(firstAllowedPath(can) ?? '/', { replace: true });
     } catch (err) {
       setError(errorMessage(err, 'Connexion impossible'));
     } finally {

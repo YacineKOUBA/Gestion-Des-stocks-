@@ -91,7 +91,10 @@ export function ReservationPage() {
       header: 'Statut',
       render: (r) => <Badge tone={STATUS_TONE[r.status]}>{STATUS_LABEL[r.status]}</Badge>,
     },
-    ...(can('reservation:write')
+    // D19 : valider et annuler ne relevent plus du meme droit. Valider transforme
+    // les mouvements de blocage en SORTIES (sortie reelle du stock), annuler rend
+    // simplement le stock : un profil peut donc annuler sans pouvoir valider.
+    ...(can('reservation:write') || can('reservation:decide')
       ? [
           {
             key: 'actions',
@@ -100,28 +103,32 @@ export function ReservationPage() {
             render: (r: Reservation) =>
               r.status === 'ACTIF' ? (
                 <div className="row-actions">
-                  <button
-                    type="button"
-                    className="btn btn-small btn-primary"
-                    disabled={busy === r.id}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void runAction(r.id, 'valider', 'Valider');
-                    }}
-                  >
-                    Valider
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-small btn-danger"
-                    disabled={busy === r.id}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void runAction(r.id, 'annuler', 'Annuler');
-                    }}
-                  >
-                    Annuler
-                  </button>
+                  {can('reservation:decide') ? (
+                    <button
+                      type="button"
+                      className="btn btn-small btn-primary"
+                      disabled={busy === r.id}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void runAction(r.id, 'valider', 'Valider');
+                      }}
+                    >
+                      Valider
+                    </button>
+                  ) : null}
+                  {can('reservation:write') ? (
+                    <button
+                      type="button"
+                      className="btn btn-small btn-danger"
+                      disabled={busy === r.id}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void runAction(r.id, 'annuler', 'Annuler');
+                      }}
+                    >
+                      Annuler
+                    </button>
+                  ) : null}
                 </div>
               ) : (
                 <span className="muted">
@@ -297,24 +304,28 @@ export function ReservationPage() {
             empty="Aucun mouvement."
           />
 
-          {detail.status === 'ACTIF' && can('reservation:write') ? (
+          {detail.status === 'ACTIF' && (can('reservation:write') || can('reservation:decide')) ? (
             <div className="form-actions">
-              <button
-                type="button"
-                className="btn btn-danger"
-                disabled={busy === detail.id}
-                onClick={() => void runAction(detail.id, 'annuler', 'Annuler')}
-              >
-                Annuler la réservation
-              </button>
-              <button
-                type="button"
-                className="btn btn-primary"
-                disabled={busy === detail.id}
-                onClick={() => void runAction(detail.id, 'valider', 'Valider')}
-              >
-                Valider
-              </button>
+              {can('reservation:write') ? (
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  disabled={busy === detail.id}
+                  onClick={() => void runAction(detail.id, 'annuler', 'Annuler')}
+                >
+                  Annuler la réservation
+                </button>
+              ) : null}
+              {can('reservation:decide') ? (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={busy === detail.id}
+                  onClick={() => void runAction(detail.id, 'valider', 'Valider')}
+                >
+                  Valider
+                </button>
+              ) : null}
             </div>
           ) : null}
         </Modal>

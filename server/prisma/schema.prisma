@@ -21,6 +21,10 @@ enum RoleCode {
   // Profil de consultation reserve a la direction generale (D16) : acces en lecture
   // aux 9 ecrans de pilotage, aucune saisie ni modification.
   TOP_MANAGEMENT
+  // Administration des ventes (D19) : consultation sur etat de stock, articles,
+  // mouvements et lots ; gestion des reservations SANS validation (une validation
+  // autorise une sortie reelle du stock).
+  SALES_ADMIN
 }
 
 enum PartnerType {
