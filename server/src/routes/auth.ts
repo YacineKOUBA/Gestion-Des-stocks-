@@ -8,6 +8,7 @@ import { loginSchema } from '../validators';
 import { audit } from '../utils/audit';
 import { auth } from '../middlewares/auth';
 import { unauthorized } from '../utils/apiError';
+import { permissionsFor } from '../auth/permissions';
 
 const router = Router();
 
@@ -26,7 +27,15 @@ router.post('/login', async (req, res) => {
   await audit(user.id, 'CONNEXION', 'user', String(user.id), { login });
   res.json({
     token,
-    user: { id: user.id, login: user.login, displayName: user.displayName, role: user.role.code },
+    user: {
+      id: user.id,
+      login: user.login,
+      displayName: user.displayName,
+      role: user.role.code,
+      roleLabel: user.role.label,
+      // D16 : le client recoit ses droits, il ne duplique donc pas la matrice.
+      permissions: permissionsFor(user.role.code),
+    },
   });
 });
 
@@ -40,6 +49,8 @@ router.get('/me', auth, async (req, res) => {
     login: user!.login,
     displayName: user!.displayName,
     role: user!.role.code,
+    roleLabel: user!.role.label,
+    permissions: permissionsFor(user!.role.code),
   });
 });
 

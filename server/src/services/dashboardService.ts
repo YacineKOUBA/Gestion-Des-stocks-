@@ -89,15 +89,12 @@ async function articleAlerts() {
 }
 
 export async function alerts() {
-  const [stock, flags, loans] = await Promise.all([
-    articleAlerts(),
-    lotsFlags(),
-    prisma.loan.findMany({
-      where: { status: 'OUVERT' },
-      select: { id: true, partner: { select: { name: true } }, quantity: true },
-    }),
-  ]);
-  return { stock, lots: flags.lots.filter((l) => l.flag === 'ROUGE' || l.flag === 'PERIME'), prets: loans };
+  // D17 : les prets/emprunts ne sont plus renvoyes ici. Le tableau de bord affiche
+  // la carte « Prets / emprunts en cours » via /loans, qui exige loan:read ; ce
+  // doublon n'etait consomme par aucun ecran et aurait fait fuiter les prets vers
+  // les profils qui n'y ont pas droit (le magasinier).
+  const [stock, flags] = await Promise.all([articleAlerts(), lotsFlags()]);
+  return { stock, lots: flags.lots.filter((l) => l.flag === 'ROUGE' || l.flag === 'PERIME') };
 }
 
 export async function stockByCategory() {

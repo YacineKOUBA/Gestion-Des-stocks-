@@ -3,12 +3,15 @@ import { prisma } from '../prisma';
 import { parse } from '../utils/parse';
 import { referentialSchema } from '../validators/article';
 import { audit } from '../utils/audit';
-import { requireRole } from '../middlewares/rbac';
-import { RoleCode } from '@prisma/client';
+import { requirePermission } from '../middlewares/permissions';
 import { notFound, badRequest, conflict } from '../utils/apiError';
 import { Prisma } from '@prisma/client';
 
 const router = Router();
+
+// D16 : les lectures etant ouvertes a tous les profils, seul l'ecran Referentiel est
+// protege (menu `admin` avant D16). Aucune ecriture n'etait accessible au magasinier.
+router.use(requirePermission('referential:read'));
 
 const REFERENCE_MODELS = [
   'family',
@@ -72,7 +75,7 @@ router.get('/roles', async (_req, res) =>
   res.json(await prisma.role.findMany({ orderBy: { id: 'asc' } })));
 
 // Creation (admin) : POST /referential/:model
-router.post('/:model', requireRole(RoleCode.ADMIN), async (req, res) => {
+router.post('/:model', requirePermission('referential:write'), async (req, res) => {
   const model = req.params.model as ReferenceModel;
   if (!REFERENCE_MODELS.includes(model)) {
     throw notFound(`Référentiel inconnu : ${req.params.model}`);
@@ -102,7 +105,7 @@ async function deleteRef(model: ReferenceModel, id: number) {
   }
 }
 
-router.delete('/:model/:id', requireRole(RoleCode.ADMIN), async (req, res) => {
+router.delete('/:model/:id', requirePermission('referential:write'), async (req, res) => {
   const model = req.params.model as ReferenceModel;
   if (!REFERENCE_MODELS.includes(model)) {
     throw notFound(`Référentiel inconnu : ${req.params.model}`);

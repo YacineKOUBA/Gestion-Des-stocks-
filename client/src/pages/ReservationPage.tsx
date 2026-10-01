@@ -7,6 +7,7 @@ import { ReservationFormModal } from '../components/ReservationFormModal';
 import type { Reservation, ReservationStatus } from '../types';
 import { Qty } from '../components/Qty';
 import { formatDate, formatDateTime } from '../utils/format';
+import { useAuth } from '../context/AuthContext';
 
 const STATUS_LABEL: Record<ReservationStatus, string> = {
   ACTIF: 'Active',
@@ -31,6 +32,7 @@ const FILTER_OPTIONS: { value: string; label: string }[] = [
 ];
 
 export function ReservationPage() {
+  const { can } = useAuth();
   const [statut, setStatut] = useState('');
   const [formOpen, setFormOpen] = useState(false);
   const [detail, setDetail] = useState<Reservation | null>(null);
@@ -89,40 +91,46 @@ export function ReservationPage() {
       header: 'Statut',
       render: (r) => <Badge tone={STATUS_TONE[r.status]}>{STATUS_LABEL[r.status]}</Badge>,
     },
-    {
-      key: 'actions',
-      header: '',
-      className: 'right',
-      render: (r) =>
-        r.status === 'ACTIF' ? (
-          <div className="row-actions">
-            <button
-              type="button"
-              className="btn btn-small btn-primary"
-              disabled={busy === r.id}
-              onClick={(e) => {
-                e.stopPropagation();
-                void runAction(r.id, 'valider', 'Valider');
-              }}
-            >
-              Valider
-            </button>
-            <button
-              type="button"
-              className="btn btn-small btn-danger"
-              disabled={busy === r.id}
-              onClick={(e) => {
-                e.stopPropagation();
-                void runAction(r.id, 'annuler', 'Annuler');
-              }}
-            >
-              Annuler
-            </button>
-          </div>
-        ) : (
-          <span className="muted">{r.closeReason === 'EXPIRE' ? 'Expirée automatiquement' : '—'}</span>
-        ),
-    },
+    ...(can('reservation:write')
+      ? [
+          {
+            key: 'actions',
+            header: '',
+            className: 'right',
+            render: (r: Reservation) =>
+              r.status === 'ACTIF' ? (
+                <div className="row-actions">
+                  <button
+                    type="button"
+                    className="btn btn-small btn-primary"
+                    disabled={busy === r.id}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void runAction(r.id, 'valider', 'Valider');
+                    }}
+                  >
+                    Valider
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-small btn-danger"
+                    disabled={busy === r.id}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void runAction(r.id, 'annuler', 'Annuler');
+                    }}
+                  >
+                    Annuler
+                  </button>
+                </div>
+              ) : (
+                <span className="muted">
+                  {r.closeReason === 'EXPIRE' ? 'Expirée automatiquement' : '—'}
+                </span>
+              ),
+          },
+        ]
+      : []),
   ];
 
   return (
@@ -131,9 +139,11 @@ export function ReservationPage() {
         title="Réservations"
         subtitle="Stock bloqué pour un acteur sur une période donnée"
         actions={
-          <button type="button" className="btn btn-primary" onClick={() => setFormOpen(true)}>
-            + Nouvelle réservation
-          </button>
+          can('reservation:write') ? (
+            <button type="button" className="btn btn-primary" onClick={() => setFormOpen(true)}>
+              + Nouvelle réservation
+            </button>
+          ) : null
         }
       />
 
@@ -287,7 +297,7 @@ export function ReservationPage() {
             empty="Aucun mouvement."
           />
 
-          {detail.status === 'ACTIF' ? (
+          {detail.status === 'ACTIF' && can('reservation:write') ? (
             <div className="form-actions">
               <button
                 type="button"

@@ -3,15 +3,14 @@ import { prisma } from '../prisma';
 import { createMovement, cancelMovement, reactivateMovement, deleteMovement } from '../services/movementService';
 import { parse, toBigInt } from '../utils/parse';
 import { movementSchema } from '../validators/movement';
-import { requireRole } from '../middlewares/rbac';
-import { RoleCode } from '@prisma/client';
+import { requirePermission } from '../middlewares/permissions';
 
 const router = Router();
 
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 500;
 
-router.get('/', async (req, res) => {
+router.get('/', requirePermission('movement:read'), async (req, res) => {
   const q = req.query;
   const where: Record<string, unknown> = {};
   if (q.articleId) where.articleId = Number(q.articleId);
@@ -54,24 +53,25 @@ router.get('/', async (req, res) => {
   res.json(moves);
 });
 
-router.post('/', async (req, res) => {
+router.post('/', requirePermission('movement:write'), async (req, res) => {
   const input = parse(movementSchema, req.body);
   const move = await createMovement({ ...input, movementDate: new Date(input.movementDate) }, req.user!.id);
   res.status(201).json(move);
 });
 
-router.patch('/:id/cancel', requireRole(RoleCode.ADMIN), async (req, res) => {
+// Annulation / reactivation / suppression : correction apres coup, reservee a l'administrateur.
+router.patch('/:id/cancel', requirePermission('movement:revise'), async (req, res) => {
   const id = toBigInt(req.params.id);
   res.json(await cancelMovement(id, req.user!.id));
 });
 
-router.patch('/:id/reactivate', requireRole(RoleCode.ADMIN), async (req, res) => {
+router.patch('/:id/reactivate', requirePermission('movement:revise'), async (req, res) => {
   const id = toBigInt(req.params.id);
   res.json(await reactivateMovement(id, req.user!.id));
 });
 
 // Suppression complete d'un mouvement ANNULÉ du journal des E/S (tracée dans l'audit).
-router.delete('/:id', requireRole(RoleCode.ADMIN), async (req, res) => {
+router.delete('/:id', requirePermission('movement:revise'), async (req, res) => {
   const id = toBigInt(req.params.id);
   res.json(await deleteMovement(id, req.user!.id));
 });

@@ -3,16 +3,15 @@ import { prisma } from '../prisma';
 import { parse } from '../utils/parse';
 import { settingsSchema } from '../validators';
 import { audit } from '../utils/audit';
-import { requireRole } from '../middlewares/rbac';
-import { RoleCode } from '@prisma/client';
+import { requirePermission } from '../middlewares/permissions';
 
 const router = Router();
 
-router.get('/', async (_req, res) => {
+router.get('/', requirePermission('settings:read'), async (_req, res) => {
   res.json(await prisma.setting.findMany({ orderBy: { code: 'asc' } }));
 });
 
-router.put('/', requireRole(RoleCode.ADMIN), async (req, res) => {
+router.put('/', requirePermission('settings:write'), async (req, res) => {
   const data = parse(settingsSchema, req.body);
   const updated: string[] = [];
   for (const [code, value] of Object.entries(data)) {

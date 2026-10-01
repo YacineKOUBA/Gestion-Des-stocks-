@@ -33,18 +33,29 @@ import type {
   Unit,
   User,
   ValuationResult,
+  Permission,
+  RoleCode,
 } from '../types';
+
+export interface SessionUser {
+  id: number;
+  login: string;
+  displayName: string | null;
+  role: RoleCode;
+  roleLabel: string;
+  /** Droits reellement accordes, calcules par le serveur (D16). */
+  permissions: Permission[];
+}
 
 export interface LoginResponse {
   token: string;
-  user: { id: number; login: string; displayName: string | null; role: string };
+  user: SessionUser;
 }
 
 export const authApi = {
   login: (login: string, password: string) =>
     request<LoginResponse>('/auth/login', { method: 'POST', body: { login, password } }),
-  me: () =>
-    request<{ id: number; login: string; displayName: string | null; role: string }>('/auth/me'),
+  me: () => request<SessionUser>('/auth/me'),
 };
 
 export const dashboardApi = {

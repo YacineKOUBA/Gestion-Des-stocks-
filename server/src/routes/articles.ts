@@ -2,12 +2,11 @@ import { Router } from 'express';
 import * as articleService from '../services/articleService';
 import { parse } from '../utils/parse';
 import { articleSchema, articleUpdateSchema, priceSchema } from '../validators/article';
-import { requireRole } from '../middlewares/rbac';
-import { RoleCode } from '@prisma/client';
+import { requirePermission } from '../middlewares/permissions';
 
 const router = Router();
 
-router.get('/', async (req, res) => {
+router.get('/', requirePermission('article:read'), async (req, res) => {
   const q = req.query;
   const articles = await articleService.listArticles({
     search: q.search as string | undefined,
@@ -18,15 +17,15 @@ router.get('/', async (req, res) => {
   res.json(articles);
 });
 
-router.get('/:id', async (req, res) => {
+router.get('/:id', requirePermission('article:read'), async (req, res) => {
   res.json(await articleService.getArticle(Number(req.params.id)));
 });
 
-router.get('/:id/consumption', async (req, res) => {
+router.get('/:id/consumption', requirePermission('article:read'), async (req, res) => {
   res.json(await articleService.monthlyConsumption(Number(req.params.id)));
 });
 
-router.post('/', requireRole(RoleCode.ADMIN), async (req, res) => {
+router.post('/', requirePermission('article:write'), async (req, res) => {
   const data = parse(articleSchema, req.body);
   const article = await articleService.createArticle(
     {
@@ -53,7 +52,7 @@ router.post('/', requireRole(RoleCode.ADMIN), async (req, res) => {
   res.status(201).json(article);
 });
 
-router.put('/:id', requireRole(RoleCode.ADMIN), async (req, res) => {
+router.put('/:id', requirePermission('article:write'), async (req, res) => {
   const id = Number(req.params.id);
   const data = parse(articleUpdateSchema, req.body);
   /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -78,13 +77,13 @@ router.put('/:id', requireRole(RoleCode.ADMIN), async (req, res) => {
   res.json(await articleService.updateArticle(id, input, req.user!.id));
 });
 
-router.put('/:id/price', requireRole(RoleCode.ADMIN), async (req, res) => {
+router.put('/:id/price', requirePermission('article:write'), async (req, res) => {
   const { unitPrice, currency } = parse(priceSchema, req.body);
   res.json(await articleService.setArticlePrice(Number(req.params.id), unitPrice, currency, req.user!.id));
 });
 
 // Suppression totale d'un article (autorisée uniquement s'il ne figure dans aucun dépôt).
-router.delete('/:id', requireRole(RoleCode.ADMIN), async (req, res) => {
+router.delete('/:id', requirePermission('article:write'), async (req, res) => {
   res.json(await articleService.deleteArticle(Number(req.params.id), req.user!.id));
 });
 

@@ -6,10 +6,12 @@ import { DataTable, type Column } from '../components/DataTable';
 import { Qty } from '../components/Qty';
 import type { Lot, LotFlagCode } from '../types';
 import { formatDate, formatMoney } from '../utils/format';
+import { useAuth } from '../context/AuthContext';
 
 const FLAGS: LotFlagCode[] = ['ROUGE', 'ORANGE', 'VERT', 'PERIME'];
 
 export function LotsPage() {
+  const { can } = useAuth();
   const [flag, setFlag] = useState('');
   const [search, setSearch] = useState('');
   const [creating, setCreating] = useState(false);
@@ -52,15 +54,19 @@ export function LotsPage() {
       header: 'Observation',
       render: (l) => (l.observation && l.observation.trim() ? l.observation.trim() : <span className="muted">—</span>),
     },
-    {
-      key: 'action',
-      header: 'Action',
-      render: (l) => (
-        <button type="button" className="btn btn-sm" onClick={() => setEditing(l)}>
-          Modifier
-        </button>
-      ),
-    },
+    ...(can('lot:write')
+      ? [
+          {
+            key: 'action',
+            header: 'Action',
+            render: (l: Lot) => (
+              <button type="button" className="btn btn-sm" onClick={() => setEditing(l)}>
+                Modifier
+              </button>
+            ),
+          },
+        ]
+      : []),
   ];
 
   return (
@@ -69,9 +75,11 @@ export function LotsPage() {
         title="Lots & péremptions"
         subtitle="Suivi des lots et dates de péremption (Rouge < 6 mois, Orange < 12 mois, Vert > 12 mois)"
         actions={
-          <button type="button" className="btn btn-primary" onClick={() => setCreating(true)}>
-            Nouveau lot
-          </button>
+          can('lot:write') ? (
+            <button type="button" className="btn btn-primary" onClick={() => setCreating(true)}>
+              Nouveau lot
+            </button>
+          ) : null
         }
       />
 

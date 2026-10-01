@@ -11,7 +11,7 @@ import { formatDateTime } from '../utils/format';
 
 export function InventoryDetailPage() {
   const { id = '' } = useParams();
-  const { isAdmin } = useAuth();
+  const { can } = useAuth();
   const detail = useAsync(() => inventoriesApi.get(id), [id]);
   const [countTarget, setCountTarget] = useState<InventoryLine | null>(null);
   const [validating, setValidating] = useState<InventoryLine | null>(null);
@@ -67,12 +67,12 @@ export function InventoryDetailPage() {
       render: (l) =>
         l.status !== 'VALIDE' && l.status !== 'REFUSE' ? (
           <div className="row-actions">
-            {isOpen ? (
+            {isOpen && can('inventory:count') ? (
               <button type="button" className="btn btn-small" onClick={() => setCountTarget(l)}>
                 Compter
               </button>
             ) : null}
-            {isAdmin ? (
+            {can('inventory:decide') ? (
               <button type="button" className="btn btn-small" onClick={() => setValidating(l)}>
                 Valider
               </button>
@@ -96,15 +96,15 @@ export function InventoryDetailPage() {
             <Link to="/inventaires" className="btn">
               Retour
             </Link>
-            {isAdmin && isOpen ? (
-              <>
-                <button type="button" className="btn" onClick={handlePopulate}>
-                  Générer les lignes
-                </button>
-                <button type="button" className="btn btn-primary" onClick={handleClose}>
-                  Clôturer
-                </button>
-              </>
+            {can('inventory:write') && isOpen ? (
+              <button type="button" className="btn" onClick={handlePopulate}>
+                Générer les lignes
+              </button>
+            ) : null}
+            {can('inventory:decide') && isOpen ? (
+              <button type="button" className="btn btn-primary" onClick={handleClose}>
+                Clôturer
+              </button>
             ) : null}
           </div>
         }

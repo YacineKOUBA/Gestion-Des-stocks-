@@ -4,6 +4,7 @@ import { errorMessage, useAsync } from '../hooks/useAsync';
 import { Card, ErrorMessage, Field, PageHeader, Spinner } from '../components/ui';
 import { DataTable, type Column } from '../components/DataTable';
 import { isFamilyCategory } from '../utils/families';
+import { useAuth } from '../context/AuthContext';
 
 interface RefItem {
   id: number;
@@ -46,6 +47,7 @@ const TABS: TabConfig[] = [
 ];
 
 export function ReferentialPage() {
+  const { can } = useAuth();
   const [active, setActive] = useState(TABS[0]);
   const [version, setVersion] = useState(0);
   const data = useAsync(() => active.load(), [active.key, version]);
@@ -68,7 +70,7 @@ export function ReferentialPage() {
     ...(active.categoryColumn
       ? [{ key: 'category', header: 'Catégorie', render: (r) => r.category?.label ?? '—' } as Column<RefItem>]
       : []),
-    ...(active.model
+    ...(active.model && can('referential:write')
       ? [
           {
             key: 'actions',
@@ -110,7 +112,7 @@ export function ReferentialPage() {
           )}
         </Card>
 
-        {active.model ? (
+        {active.model && can('referential:write') ? (
           <Card title={`Ajouter — ${active.label}`}>
             <RefForm
               tab={active}

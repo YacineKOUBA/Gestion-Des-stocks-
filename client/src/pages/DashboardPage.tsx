@@ -6,12 +6,20 @@ import { DataTable, type Column } from '../components/DataTable';
 import { Qty } from '../components/Qty';
 import type { Loan } from '../types';
 import { formatDate, formatNumber } from '../utils/format';
+import { useAuth } from '../context/AuthContext';
 
 export function DashboardPage() {
+  const { can } = useAuth();
   const kpis = useAsync(() => dashboardApi.kpis(), []);
   const alerts = useAsync(() => dashboardApi.alerts(), []);
   const flags = useAsync(() => dashboardApi.lotsFlags(), []);
-  const loans = useAsync(() => loansApi.list(), []);
+  // D17 : la carte des prets n'est interrogee que si le profil y a droit, sinon
+  // l'appel echouerait en 403 et afficherait une erreur sur le tableau de bord.
+  const peutVoirPrets = can('loan:read');
+  const loans = useAsync(
+    () => (peutVoirPrets ? loansApi.list() : Promise.resolve([] as Loan[])),
+    [peutVoirPrets],
+  );
 
   const loansEnCours = (loans.data ?? []).filter((l) => (l.solde ?? 0) > 0);
 
@@ -122,19 +130,21 @@ export function DashboardPage() {
         </Card>
       </div>
 
-      <Card title="Prêts / emprunts en cours">
-        {loans.error ? <ErrorMessage message={loans.error} /> : null}
-        {loans.loading && !loans.data ? (
-          <Spinner />
-        ) : (
-          <DataTable
-            columns={loanColumns}
-            rows={loansEnCours}
-            rowKey={(l) => l.id}
-            empty="Aucun prêt / emprunt en cours."
-          />
-        )}
-      </Card>
+      {peutVoirPrets ? (
+        <Card title="Prêts / emprunts en cours">
+          {loans.error ? <ErrorMessage message={loans.error} /> : null}
+          {loans.loading && !loans.data ? (
+            <Spinner />
+          ) : (
+            <DataTable
+              columns={loanColumns}
+              rows={loansEnCours}
+              rowKey={(l) => l.id}
+              empty="Aucun prêt / emprunt en cours."
+            />
+          )}
+        </Card>
+      ) : null}
     </>
   );
 }

@@ -2,8 +2,10 @@ import { useState, type FormEvent } from 'react';
 import { settingsApi } from '../services/endpoints';
 import { errorMessage, useAsync } from '../hooks/useAsync';
 import { Card, ErrorMessage, Field, PageHeader, Spinner } from '../components/ui';
+import { useAuth } from '../context/AuthContext';
 
 export function SettingsPage() {
+  const { can } = useAuth();
   const settings = useAsync(() => settingsApi.list(), []);
   const [values, setValues] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
@@ -42,23 +44,38 @@ export function SettingsPage() {
         {settings.loading && !settings.data ? (
           <Spinner />
         ) : (
-          <form onSubmit={handleSubmit} className="form-grid">
-            <ErrorMessage message={error} />
-            {success ? <div className="alert alert-success">{success}</div> : null}
-            {current.map((setting) => (
-              <Field key={setting.code} label={setting.label ?? setting.code} hint={setting.code}>
-                <input
-                  value={valueOf(setting.code)}
-                  onChange={(e) => setValues((prev) => ({ ...prev, [setting.code]: e.target.value }))}
-                />
-              </Field>
-            ))}
-            <div className="form-actions">
-              <button type="submit" className="btn btn-primary" disabled={submitting || Object.keys(values).length === 0}>
-                {submitting ? 'Enregistrement…' : 'Enregistrer'}
-              </button>
-            </div>
-          </form>
+          <>
+            {can('settings:write') ? (
+              <form onSubmit={handleSubmit} className="form-grid">
+                <ErrorMessage message={error} />
+                {success ? <div className="alert alert-success">{success}</div> : null}
+                {current.map((setting) => (
+                  <Field key={setting.code} label={setting.label ?? setting.code} hint={setting.code}>
+                    <input
+                      value={valueOf(setting.code)}
+                      onChange={(e) => setValues((prev) => ({ ...prev, [setting.code]: e.target.value }))}
+                    />
+                  </Field>
+                ))}
+                <div className="form-actions">
+                  <button
+                    type="submit"
+                    className="btn btn-primary"
+                    disabled={submitting || Object.keys(values).length === 0}
+                  >
+                    {submitting ? 'Enregistrement…' : 'Enregistrer'}
+                  </button>
+                </div>
+              </form>
+            ) : (
+              /* Consultation seule : les valeurs restent visibles, mais non editables. */
+              current.map((setting) => (
+                <Field key={setting.code} label={setting.label ?? setting.code} hint={setting.code}>
+                  <input value={setting.value} readOnly disabled />
+                </Field>
+              ))
+            )}
+          </>
         )}
       </Card>
     </>

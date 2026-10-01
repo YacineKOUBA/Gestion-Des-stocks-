@@ -4,12 +4,11 @@ import { prisma } from '../prisma';
 import { parse } from '../utils/parse';
 import { userCreateSchema, userUpdateSchema } from '../validators';
 import { audit } from '../utils/audit';
-import { requireRole } from '../middlewares/rbac';
-import { RoleCode } from '@prisma/client';
+import { requirePermission } from '../middlewares/permissions';
 import { badRequest, notFound } from '../utils/apiError';
 
 const router = Router();
-router.use(requireRole(RoleCode.ADMIN));
+router.use(requirePermission('user:read'));
 
 // Champs retournes au client : jamais le hash du mot de passe.
 const userSelect = {
@@ -30,7 +29,7 @@ router.get('/', async (_req, res) => {
   res.json(users);
 });
 
-router.post('/', async (req, res) => {
+router.post('/', requirePermission('user:write'), async (req, res) => {
   const data = parse(userCreateSchema, req.body);
   const passwordHash = await bcrypt.hash(data.password, 10);
   const user = await prisma.user.create({
@@ -47,7 +46,7 @@ router.post('/', async (req, res) => {
   res.status(201).json(user);
 });
 
-router.put('/:id', async (req, res) => {
+router.put('/:id', requirePermission('user:write'), async (req, res) => {
   const id = Number(req.params.id);
   const data = parse(userUpdateSchema, req.body);
   const before = await prisma.user.findUnique({ where: { id }, select: userSelect });

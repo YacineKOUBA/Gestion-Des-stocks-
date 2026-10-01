@@ -1,8 +1,12 @@
 import { Router } from 'express';
 import { prisma } from '../prisma';
 import { stockWithThresholds, stockRows, encours, computeThresholds } from '../services/stockService';
+import { requirePermission } from '../middlewares/permissions';
 
 const router = Router();
+
+// Etat de stock : consultation seule, ouverte a tout profil autorise (D16).
+router.use(requirePermission('stock:read'));
 
 // /stock?group=article|full&depotId=&articleId=&categoryId=&familyId=&search=
 router.get('/', async (req, res) => {

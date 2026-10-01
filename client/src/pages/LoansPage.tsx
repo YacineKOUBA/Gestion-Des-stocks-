@@ -6,8 +6,10 @@ import { DataTable, type Column } from '../components/DataTable';
 import type { Loan, LoanType, RestitutionType } from '../types';
 import { Qty } from '../components/Qty';
 import { formatDate, formatNumber, todayInput } from '../utils/format';
+import { useAuth } from '../context/AuthContext';
 
 export function LoansPage() {
+  const { can } = useAuth();
   const [creating, setCreating] = useState(false);
   const [restituting, setRestituting] = useState<Loan | null>(null);
   const loans = useAsync(() => loansApi.list(), []);
@@ -49,9 +51,11 @@ export function LoansPage() {
         title="Prêt / Emprunt"
         subtitle="Opérations de prêt et d'emprunt avec restitutions"
         actions={
-          <button type="button" className="btn btn-primary" onClick={() => setCreating(true)}>
-            Nouvelle opération
-          </button>
+          can('loan:write') ? (
+            <button type="button" className="btn btn-primary" onClick={() => setCreating(true)}>
+              Nouvelle opération
+            </button>
+          ) : null
         }
       />
 
@@ -84,16 +88,20 @@ export function LoansPage() {
           <DataTable
             columns={[
               ...columns,
-              {
-                key: 'actions',
-                header: 'Actions',
-                render: (l: Loan) =>
-                  (l.solde ?? 0) > 0 ? (
-                    <button type="button" className="btn btn-small" onClick={() => setRestituting(l)}>
-                      Restitution
-                    </button>
-                  ) : null,
-              },
+              ...(can('loan:write')
+                ? [
+                    {
+                      key: 'actions',
+                      header: 'Actions',
+                      render: (l: Loan) =>
+                        (l.solde ?? 0) > 0 ? (
+                          <button type="button" className="btn btn-small" onClick={() => setRestituting(l)}>
+                            Restitution
+                          </button>
+                        ) : null,
+                    },
+                  ]
+                : []),
             ]}
             rows={loans.data ?? []}
             rowKey={(l) => l.id}

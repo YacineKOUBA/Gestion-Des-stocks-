@@ -1,29 +1,31 @@
 import { NavLink, Navigate, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Spinner } from './ui';
+import type { Permission } from '../types';
 
 interface NavItem {
   to: string;
   label: string;
   end?: boolean;
-  admin?: boolean;
+  /** Droit necessaire pour voir ET ouvrir l'ecran. Le serveur le revérifie. */
+  permission: Permission;
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { to: '/', label: 'Tableau de bord', end: true },
-  { to: '/stock', label: 'État de stock' },
-  { to: '/articles', label: 'Article' },
-  { to: '/mouvements', label: 'Mouvement' },
-  { to: '/lots', label: 'Lots & péremptions' },
-  { to: '/inventaires', label: 'Inventaire' },
-  { to: '/prets', label: 'Prêt / Emprunt' },
-  { to: '/reservations', label: 'Réservation' },
-  { to: '/bons', label: 'Document' },
-  { to: '/valorisation', label: 'Valorisation', admin: true },
-  { to: '/referentiels', label: 'Référentiel', admin: true },
-  { to: '/utilisateurs', label: 'Utilisateurs', admin: true },
-  { to: '/parametres', label: 'Paramètres', admin: true },
-  { to: '/audit', label: "Journal d'audit", admin: true },
+  { to: '/', label: 'Tableau de bord', end: true, permission: 'dashboard:read' },
+  { to: '/stock', label: 'État de stock', permission: 'stock:read' },
+  { to: '/articles', label: 'Article', permission: 'article:read' },
+  { to: '/mouvements', label: 'Mouvement', permission: 'movement:read' },
+  { to: '/lots', label: 'Lots & péremptions', permission: 'lot:read' },
+  { to: '/inventaires', label: 'Inventaire', permission: 'inventory:read' },
+  { to: '/prets', label: 'Prêt / Emprunt', permission: 'loan:read' },
+  { to: '/reservations', label: 'Réservation', permission: 'reservation:read' },
+  { to: '/bons', label: 'Document', permission: 'bon:read' },
+  { to: '/valorisation', label: 'Valorisation', permission: 'valuation:read' },
+  { to: '/referentiels', label: 'Référentiel', permission: 'referential:manage' },
+  { to: '/utilisateurs', label: 'Utilisateurs', permission: 'user:read' },
+  { to: '/parametres', label: 'Paramètres', permission: 'settings:read' },
+  { to: '/audit', label: "Journal d'audit", permission: 'audit:read' },
 ];
 
 export function RequireAuth() {
@@ -39,14 +41,19 @@ export function RequireAuth() {
   return <Outlet />;
 }
 
-export function RequireAdmin() {
-  const { isAdmin } = useAuth();
-  if (!isAdmin) return <Navigate to="/" replace />;
+/**
+ * Garde de route par droit (D16). Remplace `RequireAdmin`, qui ne pouvait
+ * distinguer que deux profils. Le message est volontairement sobre : le menu
+ * ne propose deja pas l'ecran, on n'est ici que face a une URL saisie a la main.
+ */
+export function RequirePermission({ permission }: { permission: Permission }) {
+  const { can } = useAuth();
+  if (!can(permission)) return <Navigate to="/" replace />;
   return <Outlet />;
 }
 
 export function Layout() {
-  const { user, isAdmin, signOut } = useAuth();
+  const { user, can, signOut } = useAuth();
   const navigate = useNavigate();
 
   function handleLogout() {
@@ -65,7 +72,7 @@ export function Layout() {
           </span>
         </div>
         <nav>
-          {NAV_ITEMS.filter((item) => !item.admin || isAdmin).map((item) => (
+          {NAV_ITEMS.filter((item) => can(item.permission)).map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
@@ -81,7 +88,7 @@ export function Layout() {
         <header className="topbar">
           <div className="topbar-user">
             <span className="user-name">{user?.displayName ?? user?.login}</span>
-            <span className={`badge badge-${isAdmin ? 'info' : 'neutral'}`}>{user?.role}</span>
+            <span className="badge badge-neutral">{user?.roleLabel}</span>
           </div>
           <button type="button" className="btn btn-ghost" onClick={handleLogout}>
             Déconnexion

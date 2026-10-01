@@ -1,10 +1,10 @@
 import { Router } from 'express';
 import { prisma } from '../prisma';
-import { requireRole } from '../middlewares/rbac';
-import { RoleCode } from '@prisma/client';
+import { requirePermission } from '../middlewares/permissions';
 
 const router = Router();
-router.use(requireRole(RoleCode.ADMIN));
+// D16 : le journal d'audit reste reserve a l'administrateur (liste du directeur).
+router.use(requirePermission('audit:read'));
 
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 500;

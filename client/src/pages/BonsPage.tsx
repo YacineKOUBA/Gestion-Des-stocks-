@@ -7,8 +7,10 @@ import type { Bon } from '../types';
 import { formatDate, formatMoney } from '../utils/format';
 import { Qty } from '../components/Qty';
 import { BonFormModal } from '../components/BonFormModal';
+import { useAuth } from '../context/AuthContext';
 
 export function BonsPage() {
+  const { can } = useAuth();
   const [creating, setCreating] = useState(false);
   const [detail, setDetail] = useState<Bon | null>(null);
   const bons = useAsync(() => bonsApi.list(), []);
@@ -29,9 +31,11 @@ export function BonsPage() {
         title="Document"
         subtitle="Bons de sortie, livraison, transfert et retour (prix unitaire et montants)"
         actions={
-          <button type="button" className="btn btn-primary" onClick={() => setCreating(true)}>
-            Nouveau bon
-          </button>
+          can('bon:write') ? (
+            <button type="button" className="btn btn-primary" onClick={() => setCreating(true)}>
+              Nouveau bon
+            </button>
+          ) : null
         }
       />
 

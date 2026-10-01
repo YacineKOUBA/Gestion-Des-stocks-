@@ -8,10 +8,11 @@ import { Prisma } from '@prisma/client';
 import { audit } from '../utils/audit';
 import { conflict } from '../utils/apiError';
 import { isLotExhausted, lotStocks } from '../utils/lotStock';
+import { requirePermission } from '../middlewares/permissions';
 
 const router = Router();
 
-router.get('/', async (req, res) => {
+router.get('/', requirePermission('lot:read'), async (req, res) => {
   const flag = req.query.flag as string | undefined;
   const articleId = req.query.articleId ? Number(req.query.articleId) : undefined;
   const search = (req.query.search as string | undefined)?.trim();
@@ -68,7 +69,9 @@ router.get('/', async (req, res) => {
   );
 });
 
-router.post('/', async (req, res) => {
+// D16 : la creation et la modification d'un lot n'étaient protegees par aucune porte
+// (donc ouvertes au magasinier). Elles le deviennent explicitement.
+router.post('/', requirePermission('lot:write'), async (req, res) => {
   const data = parse(lotSchema, req.body);
   const lot = await prisma.lot.create({
     data: {
@@ -94,7 +97,7 @@ router.post('/', async (req, res) => {
   res.status(201).json(lot);
 });
 
-router.put('/:id', async (req, res) => {
+router.put('/:id', requirePermission('lot:write'), async (req, res) => {
   const id = Number(req.params.id);
   const data = parse(lotUpdateSchema, req.body);
 

@@ -1,7 +1,10 @@
 import { Router } from 'express';
 import { kpis, alerts, lotsFlags, stockByCategory } from '../services/dashboardService';
+import { requirePermission } from '../middlewares/permissions';
 
 const router = Router();
+
+router.use(requirePermission('dashboard:read'));
 
 router.get('/kpis', async (_req, res) => {
   res.json(await kpis());

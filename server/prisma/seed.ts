@@ -17,6 +17,15 @@ async function main() {
     update: {},
     create: { code: RoleCode.MAGASINIER, label: 'Magasinier' },
   });
+  // D16 : profil de consultation reserve a la direction generale.
+  // La ligne est deja inseree par la migration 20261001090100 ; cet upsert garantit
+  // qu'elle reste presente apres un reset suivi d'un seed seul.
+  const roleTop = await prisma.role.upsert({
+    where: { code: RoleCode.TOP_MANAGEMENT },
+    update: {},
+    create: { code: RoleCode.TOP_MANAGEMENT, label: 'Direction générale' },
+  });
+  void roleTop;
 
   // ---- Utilisateurs initiaux ----
   const adminHash = await bcrypt.hash('admin2026', 10);

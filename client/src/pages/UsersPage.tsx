@@ -4,8 +4,10 @@ import { errorMessage, useAsync } from '../hooks/useAsync';
 import { Badge, Card, ErrorMessage, Field, Modal, PageHeader, Spinner } from '../components/ui';
 import { DataTable, type Column } from '../components/DataTable';
 import type { User } from '../types';
+import { useAuth } from '../context/AuthContext';
 
 export function UsersPage() {
+  const { can } = useAuth();
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<User | null>(null);
   const users = useAsync(() => usersApi.list(), []);
@@ -13,7 +15,7 @@ export function UsersPage() {
   const columns: Column<User>[] = [
     { key: 'login', header: 'Identifiant' },
     { key: 'displayName', header: 'Nom', render: (u) => u.displayName ?? '—' },
-    { key: 'role', header: 'Rôle', render: (u) => <Badge tone={u.role?.code === 'ADMIN' ? 'info' : 'neutral'}>{u.role?.code ?? '—'}</Badge> },
+    { key: 'role', header: 'Rôle', render: (u) => <Badge tone={u.role?.code === 'ADMIN' ? 'info' : 'neutral'}>{u.role?.label ?? u.role?.code ?? '—'}</Badge> },
     {
       key: 'isActive',
       header: 'Statut',
@@ -27,9 +29,11 @@ export function UsersPage() {
         title="Utilisateurs"
         subtitle="Comptes et rôles (réservé aux administrateurs)"
         actions={
-          <button type="button" className="btn btn-primary" onClick={() => setCreating(true)}>
-            Nouvel utilisateur
-          </button>
+          can('user:write') ? (
+            <button type="button" className="btn btn-primary" onClick={() => setCreating(true)}>
+              Nouvel utilisateur
+            </button>
+          ) : null
         }
       />
 
@@ -41,15 +45,19 @@ export function UsersPage() {
           <DataTable
             columns={[
               ...columns,
-              {
-                key: 'actions',
-                header: 'Actions',
-                render: (u: User) => (
-                  <button type="button" className="btn btn-small" onClick={() => setEditing(u)}>
-                    Modifier
-                  </button>
-                ),
-              },
+              ...(can('user:write')
+                ? [
+                    {
+                      key: 'actions',
+                      header: 'Actions',
+                      render: (u: User) => (
+                        <button type="button" className="btn btn-small" onClick={() => setEditing(u)}>
+                          Modifier
+                        </button>
+                      ),
+                    },
+                  ]
+                : []),
             ]}
             rows={users.data ?? []}
             rowKey={(u) => u.id}

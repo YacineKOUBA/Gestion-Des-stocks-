@@ -55,7 +55,7 @@ const emptyForm: FormState = {
 };
 
 export function ArticlesPage() {
-  const { isAdmin } = useAuth();
+  const { can } = useAuth();
   const [search, setSearch] = useState('');
   const [categoryId, setCategoryId] = useState('');
   const [editing, setEditing] = useState<Article | 'new' | null>(null);
@@ -115,7 +115,7 @@ export function ArticlesPage() {
         title="Article"
         subtitle="Catalogue des articles et prix unitaires"
         actions={
-          isAdmin ? (
+          can('article:write') ? (
             <button type="button" className="btn btn-primary" onClick={() => setEditing('new')}>
               Nouvel article
             </button>
@@ -149,7 +149,7 @@ export function ArticlesPage() {
           <DataTable
             columns={[
               ...columns,
-              ...(isAdmin
+              ...(can('article:write')
                 ? ([
                     {
                       key: 'actions',

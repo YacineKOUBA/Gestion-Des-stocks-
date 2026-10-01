@@ -18,6 +18,9 @@ datasource db {
 enum RoleCode {
   ADMIN
   MAGASINIER
+  // Profil de consultation reserve a la direction generale (D16) : acces en lecture
+  // aux 9 ecrans de pilotage, aucune saisie ni modification.
+  TOP_MANAGEMENT
 }
 
 enum PartnerType {

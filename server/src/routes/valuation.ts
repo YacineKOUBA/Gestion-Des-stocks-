@@ -1,10 +1,12 @@
 import { Router } from 'express';
 import { valuation } from '../services/valuationService';
-import { requireRole } from '../middlewares/rbac';
-import { RoleCode } from '@prisma/client';
+import { requirePermission } from '../middlewares/permissions';
 
 const router = Router();
-router.use(requireRole(RoleCode.ADMIN));
+
+// D16 : la Valorisation etait reservee a l'administrateur. Elle s'ouvre a tout profil
+// disposant de valuation:read, ce qui inclut la direction generale.
+router.use(requirePermission('valuation:read'));
 
 router.get('/', async (req, res) => {
   const q = req.query;

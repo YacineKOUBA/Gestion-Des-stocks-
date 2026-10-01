@@ -9,7 +9,7 @@ import type { Inventory } from '../types';
 import { formatDateTime } from '../utils/format';
 
 export function InventoriesPage() {
-  const { isAdmin } = useAuth();
+  const { can } = useAuth();
   const navigate = useNavigate();
   const [creating, setCreating] = useState(false);
   const inventories = useAsync(() => inventoriesApi.list(), []);
@@ -33,7 +33,7 @@ export function InventoriesPage() {
         title="Inventaire"
         subtitle="Campagnes de comptage et ajustements"
         actions={
-          isAdmin ? (
+          can('inventory:write') ? (
             <button type="button" className="btn btn-primary" onClick={() => setCreating(true)}>
               Nouvelle campagne
             </button>

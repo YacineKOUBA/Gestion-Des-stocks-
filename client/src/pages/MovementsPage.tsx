@@ -63,7 +63,7 @@ function buildBonDrafts(move: Movement, moveType: string): BonDraft[] {
 }
 
 export function MovementsPage() {
-  const { isAdmin } = useAuth();
+  const { can } = useAuth();
   const [type, setType] = useState('');
   const [depotId, setDepotId] = useState('');
   const [from, setFrom] = useState('');
@@ -186,16 +186,18 @@ export function MovementsPage() {
         title="Mouvement"
         subtitle="Entrées, sorties, transferts, pertes, ajustements et retours"
         actions={
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={() => {
-              setSuccess(null);
-              setCreating(true);
-            }}
-          >
-            Nouveau mouvement
-          </button>
+          can('movement:write') ? (
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => {
+                setSuccess(null);
+                setCreating(true);
+              }}
+            >
+              Nouveau mouvement
+            </button>
+          ) : null
         }
       />
 
@@ -231,7 +233,7 @@ export function MovementsPage() {
           <DataTable
             columns={[
               ...columns,
-              ...(isAdmin
+              ...(can('movement:revise')
                 ? ([
                     {
                       key: 'actions',

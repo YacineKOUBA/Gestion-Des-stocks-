@@ -5,8 +5,12 @@ import { prisma } from '../prisma';
 import { badRequest } from '../utils/apiError';
 import { parse } from '../utils/parse';
 import { loanSchema, restitutionSchema } from '../validators';
+import { requirePermission } from '../middlewares/permissions';
 
 const router = Router();
+
+// Prets / emprunts : module ouvert a tout profil autorise, la saisie exige loan:write.
+router.use(requirePermission('loan:read'));
 
 router.get('/', async (_req, res) => {
   res.json(await loanService.listLoans());
@@ -42,12 +46,12 @@ router.get('/synthesis', async (_req, res) => {
   res.json(await loanService.synthesis());
 });
 
-router.post('/', async (req, res) => {
+router.post('/', requirePermission('loan:write'), async (req, res) => {
   const data = parse(loanSchema, req.body);
   res.status(201).json(await loanService.createLoan(data, req.user!.id));
 });
 
-router.post('/restitution', async (req, res) => {
+router.post('/restitution', requirePermission('loan:write'), async (req, res) => {
   const data = parse(restitutionSchema, req.body);
   res.status(201).json(await loanService.createRestitution(data, req.user!.id));
 });

@@ -1,4 +1,43 @@
-export type RoleCode = 'ADMIN' | 'MAGASINIER';
+export type RoleCode = 'ADMIN' | 'MAGASINIER' | 'TOP_MANAGEMENT';
+
+/**
+ * Droits de l'application (D16).
+ *
+ * Cette liste est un MIROIR de `server/src/auth/permissions.ts`, mais elle ne sert
+ * qu'a la verification de compilation. La source de verite reste le serveur : il
+ * renvoie les droits reels dans /auth/login et /auth/me, et le client ne calcule
+ * donc jamais un droit de lui-meme. Toute divergence ici provoque au mieux une
+ * erreur TypeScript, au pire un bouton masque a tort.
+ */
+export type Permission =
+  | 'dashboard:read'
+  | 'stock:read'
+  | 'article:read'
+  | 'article:write'
+  | 'movement:read'
+  | 'movement:write'
+  | 'movement:revise'
+  | 'lot:read'
+  | 'lot:write'
+  | 'inventory:read'
+  | 'inventory:count'
+  | 'inventory:write'
+  | 'inventory:decide'
+  | 'loan:read'
+  | 'loan:write'
+  | 'reservation:read'
+  | 'reservation:write'
+  | 'bon:read'
+  | 'bon:write'
+  | 'valuation:read'
+  | 'referential:read'
+  | 'referential:manage'
+  | 'referential:write'
+  | 'user:read'
+  | 'user:write'
+  | 'settings:read'
+  | 'settings:write'
+  | 'audit:read';
 export type ArticleEmploi = 'PRODUCTION' | 'REVENTE_EN_LETAT' | 'MIXTE';
 export type SourceAchat = 'INTERNATIONAL' | 'LOCAL' | 'MIXTE' | 'NON_DEFINI';
 export type ArticleStatut = 'ACTIVE' | 'INACTIVE';
@@ -381,7 +420,6 @@ export interface LotFlag {
 export interface DashboardAlerts {
   stock: { articleId: number; code: string; designation: string; observation: string }[];
   lots: LotFlag[];
-  prets: { id: string; partner: { name: string } | null; quantity: string }[];
 }
 
 export interface ValuationResult {
