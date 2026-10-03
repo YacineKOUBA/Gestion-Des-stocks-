@@ -82,7 +82,8 @@ export function ReservationFormModal({ onClose, onSaved }: { onClose: () => void
     const out: ReactNode[] = [];
     for (const r of rows) {
       if (reste <= 0) break;
-      const part = Math.min(r.quantity, reste);
+      // FEFO sur le stock LIBRE : ce qui est deja promis ne peut pas etre repris.
+      const part = Math.min(r.libre, reste);
       reste -= part;
       out.push(
         <span key={`${r.lotNumber ?? 'sans-lot'}-${out.length}`}>
@@ -117,14 +118,31 @@ export function ReservationFormModal({ onClose, onSaved }: { onClose: () => void
     }
     for (const l of valides) {
       const art = articles.data?.find((a) => a.id === Number(l.articleId));
-      const dispoArticle = dispo[Number(l.articleId)]?.total ?? 0;
-      if (Number(l.quantity) > dispoArticle) {
+      const info = dispo[Number(l.articleId)];
+      const libreArticle = info?.total ?? 0;
+      // Le serveur plafonne le CUMUL des reservations ACTIF a pctPlafond % du stock
+      // physique. Une ligne seule peut donc depasser ce qu'il reste autorise meme
+      // si le stock libre suffit : on compare le cumul par article.
+      const demande = valides
+        .filter((x) => Number(x.articleId) === Number(l.articleId))
+        .reduce((a, x) => a + Number(x.quantity), 0);
+      const dispoArticle = Math.min(libreArticle, info?.plafondRestant ?? libreArticle);
+      if (demande > dispoArticle) {
+        const plafondLimite = (info?.plafondRestant ?? libreArticle) < libreArticle;
         setError(
-          <>
-            {`Quantité indisponible pour ${art?.code ?? ''} : `}
-            <Qty value={dispoArticle} />
-            {' en stock. Le stock se bloque dès la réservation, vérifiez la disponibilité.'}
-          </>,
+          plafondLimite ? (
+            <>
+              {`Plafond de réservation atteint pour ${art?.code ?? ''} : `}
+              <Qty value={info?.plafondRestant ?? 0} />
+              {` encore mobilisables (${info?.pctPlafond ?? 15} % du stock). Réduisez la quantité.`}
+            </>
+          ) : (
+            <>
+              {`Quantité indisponible pour ${art?.code ?? ''} : `}
+              <Qty value={libreArticle} />
+              {' en stock libre. Le stock se bloque dès la réservation, vérifiez la disponibilité.'}
+            </>
+          ),
         );
         return;
       }
@@ -209,9 +227,13 @@ export function ReservationFormModal({ onClose, onSaved }: { onClose: () => void
 
         {lines.map((line, index) => {
           const art = articles.data?.find((a) => a.id === Number(line.articleId));
-          const dispoArticle = line.articleId ? (dispo[Number(line.articleId)]?.total ?? 0) : 0;
+          const info = line.articleId ? dispo[Number(line.articleId)] : undefined;
+          const libreArticle = info?.total ?? 0;
+          const plafondRestant = info?.plafondRestant ?? 0;
+          const plafondLimite = plafondRestant < libreArticle;
+          const maxLigne = Math.min(libreArticle, plafondRestant);
           const qte = Number(line.quantity) || 0;
-          const trop = qte > dispoArticle;
+          const trop = qte > maxLigne;
           return (
             <div className="line-editor" key={index}>
               <select value={line.articleId} onChange={(e) => updateLine(index, { articleId: e.target.value })} required>
@@ -234,7 +256,14 @@ export function ReservationFormModal({ onClose, onSaved }: { onClose: () => void
               <span className="muted">
                 {trop ? '⚠ ' : ''}
                 {art?.unit?.code ? `${art.unit.code} · ` : ''}
-                dispo <Qty value={dispoArticle} />
+                libre <Qty value={libreArticle} />
+                {line.articleId ? (
+                  <>
+                    {' · plafond restant '}
+                    <Qty value={plafondRestant} />
+                    {` (${info?.pctPlafond ?? 15} %)`}
+                  </>
+                ) : null}
               </span>
               {lines.length > 1 ? (
                 <button
@@ -245,7 +274,13 @@ export function ReservationFormModal({ onClose, onSaved }: { onClose: () => void
                   ×
                 </button>
               ) : null}
-              {qte > 0 && !trop && dispoArticle > 0 ? (
+              {trop && plafondLimite ? (
+                <span className="muted">
+                  Le plafond de {info?.pctPlafond ?? 15} % est atteint pour cet article : la quantité
+                  demandée dépasse ce qu'il reste autorisé.
+                </span>
+              ) : null}
+              {qte > 0 && !trop && maxLigne > 0 ? (
                 <span className="muted">
                   Lots pris (péremption la plus proche d’abord) : {fefoPreview(Number(line.articleId), qte).join(' · ')}
                 </span>

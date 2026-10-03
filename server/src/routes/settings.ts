@@ -4,6 +4,7 @@ import { parse } from '../utils/parse';
 import { settingsSchema } from '../validators';
 import { audit } from '../utils/audit';
 import { requirePermission } from '../middlewares/permissions';
+import { invalidatePlafondCache, PLAFOND_CODE } from '../services/reservationStock';
 
 const router = Router();
 
@@ -22,6 +23,10 @@ router.put('/', requirePermission('settings:write'), async (req, res) => {
     });
     updated.push(code);
   }
+  // D20 : le plafond de reservation est lu en memoire pendant 5 s. Il faut
+  // l'oublier immediatement, sinon la nouvelle valeur ne s'appliquerait qu'apres
+  // le delai, et l'utilisateur pourrait croire que l'ecran ne fonctionne pas.
+  if (PLAFOND_CODE in data) invalidatePlafondCache();
   await audit(req.user!.id, 'MODIFICATION', 'settings', updated.join(','), { data });
   res.json({ updated });
 });

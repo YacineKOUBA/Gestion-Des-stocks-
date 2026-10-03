@@ -1,5 +1,6 @@
 import { prisma } from '../prisma';
 import { monthlyConsumption } from './articleService';
+import { activeAllocations } from './reservationStock';
 import { Prisma } from '@prisma/client';
 import { dec, toNumber } from '../utils/decimal';
 
@@ -90,7 +91,43 @@ export interface StockRow {
   lot?: string | null;
   lotId?: number | null;
   expiryDate?: Date | null;
+  /** Stock BRUT : somme des mouvements actifs, reservations confondues. */
   quantity: number;
+  /**
+   * D20 : quantite promisee par les reservations ACTIF, cumulee comme `quantity`
+   * (meme regroupement, memes filtres). Une reservation ne retire pas de stock :
+   * elle fige des lots. Cette colonne est donc une information, pas un mouvement.
+   */
+  reservedQuantity: number;
+  /** reservedQuantity / quantity, en pourcentage du stock brut. */
+  reservedPercent: number;
+  /** Stock reellement mobilisable : quantity − reservedQuantity. */
+  freeQuantity: number;
+}
+
+/**
+ * Cle de regroupement, partagee par les mouvements et par les parts reservees : les
+ * deux doivent etre groupes EXACTEMENT de la meme facon, sinon les colonnes
+ * "deja reserve" et "stock libre" ne correspondraient a rien de visible.
+ *
+ * IMPORTANT : regrouper par IDENTIFIANTS numeriques (lot.id, depot.id, location.id) et non
+ * par libelles/numero de lot : deux lots distincts partageant le meme numero ne doivent
+ * jamais voir leurs quantites fusionnees.
+ */
+function groupKey(
+  group: string | undefined,
+  parts: {
+    articleId: number;
+    lotId?: number | null;
+    depotId?: number | null;
+    locationId?: number | null;
+  },
+): string {
+  if (group === 'full') {
+    return `${parts.articleId}|${parts.lotId ?? ''}|${parts.depotId ?? ''}|${parts.locationId ?? ''}`;
+  }
+  if (group === 'lot') return `${parts.articleId}|${parts.lotId ?? ''}`;
+  return `${parts.articleId}`;
 }
 
 export async function stockRows(filters: {
@@ -128,6 +165,23 @@ export async function stockRows(filters: {
     },
   });
 
+  // D20 : memes filtres, meme regroupement que les mouvements ci-dessus.
+  const reserved = new Map<string, Prisma.Decimal>();
+  const reservedParts = await activeAllocations(
+    {
+      ...(filters.articleId ? { articleIds: [filters.articleId] } : {}),
+      ...(filters.depotId ? { depotId: filters.depotId } : {}),
+      ...(filters.categoryId ? { categoryId: filters.categoryId } : {}),
+      ...(filters.familyId ? { familyId: filters.familyId } : {}),
+      ...(filters.search ? { search: filters.search } : {}),
+    },
+    prisma as unknown as Prisma.TransactionClient,
+  );
+  for (const a of reservedParts) {
+    const key = groupKey(filters.group, a);
+    reserved.set(key, (reserved.get(key) ?? new Prisma.Decimal(0)).add(a.remaining));
+  }
+
   interface Acc {
     articleId: number;
     articleCode: string;
@@ -145,19 +199,12 @@ export async function stockRows(filters: {
 
   const map = new Map<string, Acc & { qty: Prisma.Decimal }>();
   for (const m of moves) {
-    // cle : article (par defaut), article+lot (group 'lot'), ou article+lot+depot+emplacement
-    // (group 'full').
-    // IMPORTANT : regrouper par IDENTIFIANTS numeriques (lot.id, depot.id, location.id) et non
-    // par libelles/numero de lot : deux lots distincts partageant le meme numero ne doivent
-    // jamais voir leurs quantites fusionnees.
-    let key: string;
-    if (filters.group === 'full') {
-      key = `${m.article.id}|${m.lot?.id ?? ''}|${m.depot.id}|${m.location?.id ?? ''}`;
-    } else if (filters.group === 'lot') {
-      key = `${m.article.id}|${m.lot?.id ?? ''}`;
-    } else {
-      key = `${m.article.id}`;
-    }
+    const key = groupKey(filters.group, {
+      articleId: m.article.id,
+      lotId: m.lot?.id,
+      depotId: m.depot.id,
+      locationId: m.location?.id,
+    });
     const cur = map.get(key);
     const base = {
       articleId: m.article.id,
@@ -184,8 +231,19 @@ export async function stockRows(filters: {
     }
   }
 
-  return Array.from(map.values())
-    .map((r) => ({ ...r, quantity: toNumber(r.qty) }))
+  return Array.from(map.entries())
+    .map(([key, r]) => {
+      const qty = toNumber(r.qty);
+      const reservedQuantity = toNumber(reserved.get(key) ?? new Prisma.Decimal(0));
+      return {
+        ...r,
+        quantity: qty,
+        reservedQuantity,
+        // Un stock nul n'a pas de base de calcul : on affiche 0 %, jamais NaN.
+        reservedPercent: qty === 0 ? 0 : Number(((reservedQuantity / qty) * 100).toFixed(1)),
+        freeQuantity: Number((qty - reservedQuantity).toFixed(3)),
+      };
+    })
     .filter((r) => r.quantity !== 0)
     .sort((a, b) => a.articleCode.localeCompare(b.articleCode));
 }

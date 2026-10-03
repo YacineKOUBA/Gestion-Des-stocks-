@@ -34,6 +34,9 @@ export const loanSchema = z.object({
   quantity: z.number().positive(),
   loanDate: z.coerce.date(),
   observation: z.string().max(255).nullish(),
+  // D20, decision 4 : un PRET sort du stock, il est donc soumis au controle
+  // d'empietement sur stock reserve et accepte un jeton de confirmation.
+  confirmToken: z.string().max(4000).nullish(),
 });
 
 export const restitutionSchema = z.object({
@@ -41,6 +44,8 @@ export const restitutionSchema = z.object({
   type: z.nativeEnum(RestitutionType),
   quantity: z.number().positive(),
   restDate: z.coerce.date(),
+  // RESTITUTION_EMPRUNT sort du stock : meme controle d'empietement que le pret.
+  confirmToken: z.string().max(4000).nullish(),
 });
 
 export const inventoryOpenSchema = z.object({
@@ -55,6 +60,9 @@ export const inventoryCountSchema = z.object({
 export const inventoryValidateSchema = z.object({
   decision: z.nativeEnum(InventoryDecision),
   lossReason: z.string().max(150).nullish(),
+  // D20, decision 4 : la cloture d'inventaire retire du stock (PERTE, ou
+  // AJUSTEMENT negatif), elle est donc soumise au controle d'empietement.
+  confirmToken: z.string().max(4000).nullish(),
 });
 
 export const bonSchema = z.object({

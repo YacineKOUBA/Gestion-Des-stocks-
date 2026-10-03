@@ -3,6 +3,13 @@ import { MoveTypeCode, Prisma } from '@prisma/client';
 import { badRequest, conflict, notFound } from '../utils/apiError';
 import { audit } from '../utils/audit';
 import { dec, toNumber } from '../utils/decimal';
+import { verifyConfirmToken } from '../utils/confirmToken';
+import {
+  consumeOverlap,
+  detectOverlap,
+  issueOverlapToken,
+  overlapTokenPayload,
+} from './reservationOverlap';
 
 export interface MoveInput {
   type: MoveTypeCode;
@@ -21,6 +28,12 @@ export interface MoveInput {
   observation?: string | null;
   sens?: number | null;
   inventoryId?: bigint | null;
+  /**
+   * D20, decision 7 : jeton renvoye par un refus d'empietement sur stock reserve.
+   * L'operation est rejouee a l'identique, avec ce jeton, une fois que
+   * l'utilisateur a confirme. Sans jeton valide, l'ecriture est refusee.
+   */
+  confirmToken?: string | null;
 }
 
 type Db = Prisma.TransactionClient;
@@ -84,7 +97,13 @@ async function lockArticle(tx: Db, articleId: number) {
   await tx.$queryRaw`SELECT id FROM "articles" WHERE id = ${articleId} FOR UPDATE`;
 }
 
-async function assertAvailable(input: MoveInput, checkDepotId: number, db: Db) {
+/**
+ * Verifie la disponibilite sur la cellule source et RENVOIE son stock. Le stock
+ * est reutilise par le controle d'empietement D20 : les deux portent sur la meme
+ * cellule (article + lot + depot + emplacement), le recalculer serait une seconde
+ * requete identique.
+ */
+async function assertAvailable(input: MoveInput, checkDepotId: number, db: Db): Promise<Prisma.Decimal> {
   const stock = await availableStockDeci(
     {
       articleId: input.articleId,
@@ -99,6 +118,7 @@ async function assertAvailable(input: MoveInput, checkDepotId: number, db: Db) {
       `Stock insuffisant pour l'article ${input.articleId} (disponible : ${toNumber(stock)})`,
     );
   }
+  return stock;
 }
 
 /**
@@ -106,10 +126,11 @@ async function assertAvailable(input: MoveInput, checkDepotId: number, db: Db) {
  * article qui n'a jamais eu de SORTIE, et le total rendu ne peut pas depasser le total
  * sorti.
  *
- * Seuls les mouvements SORTIE comptent comme departs client. PERTE, TRANSFERT et
- * RESERVATION sont exclus : une perte retrouvee se regle par un AJUSTEMENT (qui reintegre
- * le stock), et un stock bloque par une reservation n'est pas sorti du depot (il ne le
- * devient que si la reservation est validee, ses mouvements passant alors en SORTIE).
+ * Seuls les mouvements SORTIE comptent comme departs client. PERTE et TRANSFERT
+ * sont exclus : une perte retrouvee se regle par un AJUSTEMENT (qui reintegre
+ * le stock). Les reservations n'ont plus de type de mouvement du tout (D20) :
+ * une reservation honoree genere un vrai SORTIE a la validation, et c'est ce
+ * SORTIE-la qui compte comme depart client.
  */
 async function assertRetourCoherent(input: MoveInput, db: Db) {
   const mouvements = await db.move.findMany({
@@ -137,6 +158,79 @@ async function assertRetourCoherent(input: MoveInput, db: Db) {
   }
 }
 
+/**
+ * D20, regle 3 — POINT DE CONTROLE UNIQUE.
+ *
+ * Toute operation qui retire du stock passe ici : sortie, perte, ajustement
+ * negatif, pret, et cloture d'inventaire. Ces operations creent toutes leurs
+ * mouvements par `createMovement`, il n'y a donc aucune autre porte a surveiller.
+ *
+ * Une reservation ACTIF fige des lots sans toucher au stock. Si l'operation
+ * retire plus que ce que le stock laisse une fois les promesses honorees, elle
+ * mord dans une promesse : on refuse, on explique (Y, X, Z, overlap = X + Z − Y)
+ * et on rend un jeton. Le client repose la meme operation avec ce jeton si et
+ * seulement si l'utilisateur a repondu oui ; l'accord preleve alors exactement
+ * `overlap` unites sur les promesses concernees, ce qui laisse la promesse
+ * restante egale au stock restant.
+ *
+ * Le controle est volontairement place APRES les tests de disponibilite : inutile
+ * de demander a l'utilisateur d'accepter une amputation sur une operation qui de
+ * toute facon echouerait.
+ */
+async function assertNoReservedOverlap(
+  input: MoveInput,
+  sens: number,
+  stockCellule: Prisma.Decimal | null,
+  userId: number,
+  db: Db,
+) {
+  if (sens >= 0 || stockCellule === null) return;
+
+  const cell = {
+    articleId: input.articleId,
+    lotId: input.lotId ?? null,
+    depotId: input.depotId,
+    locationId: input.locationId ?? null,
+  };
+
+  const conflit = await detectOverlap(
+    { cell, stockCellule, quantite: dec(input.quantity), operation: input.type },
+    db,
+  );
+  if (!conflit) return;
+
+  const payload = overlapTokenPayload(conflit, userId);
+  if (!verifyConfirmToken(input.confirmToken, payload)) {
+    throw conflict(conflit.message, {
+      code: 'RESERVATION_EMPIETEMENT',
+      confirmation: {
+        ...conflit,
+        // Token a renvoyer tel quel avec la meme operation si l'utilisateur accepte.
+        confirmToken: issueOverlapToken(conflit, userId),
+      },
+    });
+  }
+
+  // Accord explicite : on preleve l'overlap sur les promesses concernees.
+  const amputations = await consumeOverlap(dec(conflit.overlap), cell, db);
+  await audit(userId, 'VALIDATION', 'reservation_allocation', String(conflit.articleId), {
+    motif: 'EMPIETEMENT_RESERVATION_CONFIRME',
+    operation: input.type,
+    articleId: conflit.articleId,
+    lot: conflit.lotNumber,
+    lotId: conflit.lotId,
+    depotId: conflit.depotId,
+    locationId: conflit.locationId,
+    Y_stockDuLot: conflit.stockCellule,
+    X_reserve: conflit.reserve,
+    Z_aSortir: conflit.quantite,
+    overlap: conflit.overlap,
+    formule: 'overlap = X + Z − Y',
+    reservations: conflit.reservations,
+    amputations,
+  });
+}
+
 async function createMovementTx(input: MoveInput, userId: number, db: Db) {
   const article = await assertLotRequired(input, db);
   await lockArticle(db, input.articleId);
@@ -160,12 +254,14 @@ async function createMovementTx(input: MoveInput, userId: number, db: Db) {
       break;
   }
 
-  // Controle de disponibilite pour les mouvements negatifs (0.4 : bloquer)
+  // Controle de disponibilite pour les mouvements negatifs (0.4 : bloquer).
+  // Le stock de la cellule source est conserve : c'est le Y du controle D20.
+  let stockCellule: Prisma.Decimal | null = null;
   if (input.type === MoveTypeCode.SORTIE || input.type === MoveTypeCode.PERTE) {
-    await assertAvailable(input, input.depotId, db);
+    stockCellule = await assertAvailable(input, input.depotId, db);
   }
   if (input.type === MoveTypeCode.AJUSTEMENT && sens < 0) {
-    await assertAvailable(input, input.depotId, db);
+    stockCellule = await assertAvailable(input, input.depotId, db);
   }
   if (input.type === MoveTypeCode.RETOUR) {
     await assertRetourCoherent(input, db);
@@ -177,8 +273,11 @@ async function createMovementTx(input: MoveInput, userId: number, db: Db) {
     if (input.depotDestId === input.depotId) {
       throw badRequest('Dépôt source et destination identiques');
     }
-    await assertAvailable(input, input.depotId, db);
+    stockCellule = await assertAvailable(input, input.depotId, db);
   }
+
+  // D20, regle 3 : seul passage oblige pour toute operation qui retire du stock.
+  await assertNoReservedOverlap(input, sens, stockCellule, userId, db);
 
   const typeId = (await db.moveType.findUniqueOrThrow({ where: { code: input.type } })).id;
 

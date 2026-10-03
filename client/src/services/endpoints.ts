@@ -133,6 +133,8 @@ export interface MovementPayload {
   unitPrice?: number | null;
   currency?: string;
   observation?: string | null;
+  /** D20 : jeton signe renvoye apres confirmation d'un empietement de reservation. */
+  confirmToken?: string | null;
 }
 
 export const movementsApi = {
@@ -162,7 +164,7 @@ export const inventoriesApi = {
     request<{ created: number }>(`/inventories/${id}/populate`, { method: 'POST', body: { depotId } }),
   countLine: (id: string, lineId: string, payload: { qtyCounted: number }) =>
     request(`/inventories/${id}/lines/${lineId}/count`, { method: 'POST', body: payload }),
-  validateLine: (id: string, lineId: string, payload: { decision: InventoryDecision; lossReason?: string }) =>
+  validateLine: (id: string, lineId: string, payload: { decision: InventoryDecision; lossReason?: string; confirmToken?: string | null }) =>
     request(`/inventories/${id}/lines/${lineId}/validate`, { method: 'POST', body: payload }),
   close: (id: string) => request<Inventory>(`/inventories/${id}/close`, { method: 'POST' }),
 };
@@ -176,7 +178,7 @@ export const loansApi = {
       nbRestituees: number;
       nbRestitueesIncompletes: number;
     }>('/loans/synthesis'),
-  create: (payload: { type: LoanType; partnerId: number; articleId: number; lotId?: number | null; depotId?: number | null; locationId?: number | null; quantity: number; loanDate: string; observation?: string | null }) =>
+  create: (payload: { type: LoanType; partnerId: number; articleId: number; lotId?: number | null; depotId?: number | null; locationId?: number | null; quantity: number; loanDate: string; observation?: string | null; confirmToken?: string | null }) =>
     request<Loan>('/loans', { method: 'POST', body: payload }),
   disponibilite: (params: { articleId: number; lotId?: number | null; depotId?: number | null; locationId?: number | null }) =>
     request<{ disponible: number; tousDepots: boolean; depotConseille: number; emplacementConseille: number | null }>(
@@ -188,7 +190,7 @@ export const loansApi = {
       suggested: { depotId: number; label: string; nbLignes: number; nbArticles: number };
       parDepot: { depotId: number; label: string; nbLignes: number; nbArticles: number }[];
     }>('/loans/depot-suggestion'),
-  restitute: (payload: { loanId: string; type: RestitutionType; quantity: number; restDate: string }) =>
+  restitute: (payload: { loanId: string; type: RestitutionType; quantity: number; restDate: string; confirmToken?: string | null }) =>
     request('/loans/restitution', { method: 'POST', body: payload }),
 };
 
@@ -208,7 +210,8 @@ export const reservationsApi = {
     observation?: string | null;
     lines: { articleId: number; quantity: number }[];
   }) => request<Reservation>('/reservations', { method: 'POST', body: payload }),
-  validate: (id: string) => request<Reservation>(`/reservations/${id}/valider`, { method: 'POST' }),
+  validate: (id: string) =>
+    request<Reservation & { notes?: string[] }>(`/reservations/${id}/valider`, { method: 'POST' }),
   cancel: (id: string) => request<Reservation>(`/reservations/${id}/annuler`, { method: 'POST' }),
 };
 

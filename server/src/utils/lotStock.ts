@@ -9,9 +9,10 @@ export interface LotStock {
   moved: boolean;
   /**
    * Total sorti du lot en SORTIE (depart client) et date de la derniere sortie. meme
-   * convention que le controle de coherence du RETOUR : PERTE, TRANSFERT et RESERVATION
-   * n'en font pas partie. Sert a proposer en tete les lots par lesquels la marchandise est
-   * reellement partiee chez un client.
+   * convention que le controle de coherence du RETOUR : PERTE et TRANSFERT n'en font
+   * pas partie. Sert a proposer en tete les lots par lesquels la marchandise est
+   * reellement partiee chez un client. Les reservations n'apparaissent pas ici :
+   * elles ne creent aucun mouvement (D20), seule leur validation produit un SORTIE.
    */
   sortiQty: Prisma.Decimal;
   lastExitAt: Date | null;

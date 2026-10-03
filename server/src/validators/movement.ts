@@ -21,6 +21,9 @@ export const movementSchema = z
     currency: z.enum(CURRENCY_CODES as [string, ...string[]]).nullish(),
     observation: z.string().max(255).nullish(),
     sens: z.number().int().refine((v) => v === 1 || v === -1).nullish(),
+    // D20, decision 7 : jeton de confirmation d'un empietement sur stock reserve.
+    // Absent ou invalide => l'ecriture est refusee (409) avec le detail du conflit.
+    confirmToken: z.string().max(4000).nullish(),
   })
   .refine((v) => v.quantity > 0, { message: 'quantité > 0' });
 

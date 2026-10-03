@@ -23,6 +23,13 @@ export function formatMoney(value: number | string | null | undefined, currency:
   }
 }
 
+export function formatPercent(value: number | string | null | undefined, digits = 1): string {
+  if (value === null || value === undefined || value === '') return '—';
+  const n = typeof value === 'string' ? Number(value) : value;
+  if (Number.isNaN(n)) return String(value);
+  return `${formatNumber(n, digits)} %`;
+}
+
 const pad2 = (n: number) => String(n).padStart(2, '0');
 
 export function formatDate(value: string | null | undefined): string {

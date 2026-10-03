@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useState, useRef, type FormEvent } from 'react';
 import {
   articlesApi,
   lotsApi,
@@ -12,8 +12,10 @@ import { errorMessage, useAsync } from '../hooks/useAsync';
 import { Badge, Card, ErrorMessage, Field, Modal, PageHeader, Spinner, SuccessMessage } from '../components/ui';
 import { DataTable, type Column } from '../components/DataTable';
 import { BonFormModal, type BonFormInitial } from '../components/BonFormModal';
+import { OverlapConfirm } from '../components/OverlapConfirm';
 import { Qty } from '../components/Qty';
-import type { Movement, Lot } from '../types';
+import { overlapConfirmation } from '../services/api';
+import type { Movement, Lot, ReservationOverlapConfirmation } from '../types';
 import { formatDate, formatNumber, todayInput, toNumberOrNull } from '../utils/format';
 
 const MOVE_TYPES = ['ENTREE', 'SORTIE', 'TRANSFERT', 'PERTE', 'AJUSTEMENT', 'RETOUR'];
@@ -382,6 +384,9 @@ function MovementFormModal({
   });
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // D20 : conflit d'empietement renvoye par le serveur (409), a confirmer explicitement.
+  const [overlap, setOverlap] = useState<ReservationOverlapConfirmation | null>(null);
+  const dernierPayload = useRef<MovementPayload | null>(null);
 
   // Un RETOUR propose aussi les lots masques pour fin de quantite : la marchandise
   // revient sur le lot dont elle est sortie, meme si ce lot est aujourd'hui a zero.
@@ -464,12 +469,26 @@ function MovementFormModal({
       unitPrice: toNumberOrNull(form.unitPrice),
       observation: form.observation || null,
     };
+    await envoyer(payload);
+  }
+
+  /** Envoie l'operation ; en cas d'empietement, ouvre le dialogue de confirmation. */
+  async function envoyer(payload: MovementPayload) {
+    setSubmitting(true);
+    setError(null);
+    dernierPayload.current = payload;
     try {
       const created = await movementsApi.create(payload);
       const createdMove = (created as { sortie?: Movement }).sortie ?? (created as Movement);
+      setOverlap(null);
       onSaved(form.type, createdMove);
     } catch (err) {
-      setError(errorMessage(err, 'Création impossible'));
+      const conflict = overlapConfirmation(err);
+      if (conflict) {
+        setOverlap(conflict);
+      } else {
+        setError(errorMessage(err, 'Création impossible'));
+      }
     } finally {
       setSubmitting(false);
     }
@@ -615,6 +634,18 @@ function MovementFormModal({
           </button>
         </div>
       </form>
+
+      {overlap ? (
+        <OverlapConfirm
+          conflict={overlap}
+          busy={submitting}
+          onCancel={() => setOverlap(null)}
+          onConfirm={() => {
+            const p = dernierPayload.current;
+            if (p) void envoyer({ ...p, confirmToken: overlap.confirmToken });
+          }}
+        />
+      ) : null}
     </Modal>
   );
 }

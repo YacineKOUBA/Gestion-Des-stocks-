@@ -149,6 +149,7 @@ export async function validateLine(
   decision: InventoryDecision,
   lossReason: string | undefined,
   userId: number,
+  confirmToken?: string | null,
 ) {
   const line = await prisma.inventoryLine.findUnique({
     where: { id: lineId },
@@ -186,6 +187,9 @@ export async function validateLine(
         sens: variance > 0 ? 1 : -1,
         observation: decision === InventoryDecision.PERTE ? lossReason : 'Écart inventaire',
         inventoryId: line.inventoryId,
+        // D20, decision 4 : la cloture d'inventaire retire du stock, elle est
+        // donc soumise au controle d'empietement sur stock reserve.
+        confirmToken: confirmToken ?? null,
       },
       userId,
       tx,

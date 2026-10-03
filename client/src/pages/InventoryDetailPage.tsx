@@ -1,12 +1,14 @@
-import { useState, type FormEvent } from 'react';
+import { useState, useRef, type FormEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { inventoriesApi } from '../services/endpoints';
 import { useAuth } from '../context/AuthContext';
 import { errorMessage, useAsync } from '../hooks/useAsync';
 import { Badge, Card, ErrorMessage, Field, Modal, PageHeader, Spinner } from '../components/ui';
 import { DataTable, type Column } from '../components/DataTable';
+import { OverlapConfirm } from '../components/OverlapConfirm';
+import { overlapConfirmation } from '../services/api';
 import { Qty } from '../components/Qty';
-import type { InventoryDecision, InventoryLine } from '../types';
+import type { InventoryDecision, InventoryLine, ReservationOverlapConfirmation } from '../types';
 import { formatDateTime } from '../utils/format';
 
 export function InventoryDetailPage() {
@@ -269,19 +271,30 @@ function ValidateModal({
   const [lossReason, setLossReason] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // D20 : un AJUSTEMENT negatif ou une PERTE retire du stock, donc peut empieter.
+  const [overlap, setOverlap] = useState<ReservationOverlapConfirmation | null>(null);
+  const dernierPayload = useRef<Parameters<typeof inventoriesApi.validateLine>[2] | null>(null);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
+    await envoyer({
+      decision,
+      lossReason: decision === 'PERTE' ? lossReason : undefined,
+    });
+  }
+
+  async function envoyer(payload: Parameters<typeof inventoriesApi.validateLine>[2]) {
     setSubmitting(true);
     setError(null);
+    dernierPayload.current = payload;
     try {
-      await inventoriesApi.validateLine(inventoryId, line.id, {
-        decision,
-        lossReason: decision === 'PERTE' ? lossReason : undefined,
-      });
+      await inventoriesApi.validateLine(inventoryId, line.id, payload);
+      setOverlap(null);
       onSaved();
     } catch (err) {
-      setError(errorMessage(err, 'Validation impossible'));
+      const conflict = overlapConfirmation(err);
+      if (conflict) setOverlap(conflict);
+      else setError(errorMessage(err, 'Validation impossible'));
     } finally {
       setSubmitting(false);
     }
@@ -316,6 +329,18 @@ function ValidateModal({
           </button>
         </div>
       </form>
+
+      {overlap ? (
+        <OverlapConfirm
+          conflict={overlap}
+          busy={submitting}
+          onCancel={() => setOverlap(null)}
+          onConfirm={() => {
+            const p = dernierPayload.current;
+            if (p) void envoyer({ ...p, confirmToken: overlap.confirmToken });
+          }}
+        />
+      ) : null}
     </Modal>
   );
 }

@@ -37,6 +37,7 @@ export function ReservationPage() {
   const [formOpen, setFormOpen] = useState(false);
   const [detail, setDetail] = useState<Reservation | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [notes, setNotes] = useState<string[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
 
   const reservations = useAsync(() => reservationsApi.list({ status: statut || undefined }), [statut]);
@@ -46,8 +47,13 @@ export function ReservationPage() {
     if (!window.confirm(`${label} la réservation ${id} ?`)) return;
     setBusy(id);
     setActionError(null);
+    setNotes([]);
     try {
+      // D20 : la validation transforme la promesse en SORTIES reelles. Une note
+      // signale les lots amputes avant validation, et la validation est refusee
+      // (400) si le stock ne couvre plus la promesse.
       const updated = action === 'valider' ? await reservationsApi.validate(id) : await reservationsApi.cancel(id);
+      if (action === 'valider' && 'notes' in updated && updated.notes?.length) setNotes(updated.notes);
       setDetail((prev) => (prev && prev.id === updated.id ? updated : prev));
       reservations.reload();
       synthese.reload();
@@ -278,31 +284,100 @@ export function ReservationPage() {
             empty="Aucun article."
           />
 
-          <h3 className="form-section-title">Stock bloqué (lots par péremption la plus proche)</h3>
+          <h3 className="form-section-title">Lots réservés (FEFO à la création)</h3>
           <DataTable
             columns={[
               { key: 'lot', header: 'Lot' },
               { key: 'expiry', header: 'Péremption' },
+              { key: 'place', header: 'Dépôt / emplacement' },
               {
                 key: 'quantity',
-                header: 'Bloqué',
+                header: 'Réservé',
                 align: 'right',
                 render: (r) => <Qty value={r.quantity}>{r.unit ? ` ${r.unit}` : null}</Qty>,
               },
-              { key: 'place', header: 'Dépôt / emplacement' },
-              { key: 'status', header: 'Mouvement' },
-            ] as Column<{ lot: string; expiry: string; quantity: number; unit: string | null; place: string; status: string }>[]}
-            rows={detail.moves.map((m) => ({
-              lot: m.lotNumber ?? '—',
-              expiry: m.expiryDate ? formatDate(m.expiryDate) : '—',
-              quantity: m.quantity,
-              unit: m.unit,
-              place: [m.depot, m.location].filter(Boolean).join(' / '),
-              status: m.status === 'ACTIF' ? 'Bloquant' : 'Libéré',
-            }))}
+              {
+                key: 'remaining',
+                header: 'Encore promis',
+                align: 'right',
+                render: (r) => <Qty value={r.remaining}>{r.unit ? ` ${r.unit}` : null}</Qty>,
+              },
+              { key: 'status', header: 'État' },
+            ] as Column<{
+              lot: string;
+              expiry: string;
+              place: string;
+              quantity: number;
+              remaining: number;
+              unit: string | null;
+              status: string;
+            }>[]}
+            rows={detail.allocations.map((a) => {
+              // L'unité est portée par la ligne d'article : on la retrouve par article.
+              const unit = detail.lines.find((l) => l.articleId === a.articleId)?.unit ?? null;
+              return {
+                lot: a.lotNumber ?? '—',
+                expiry: a.expiryDate ? formatDate(a.expiryDate) : '—',
+                place: [a.depot, a.location].filter(Boolean).join(' / '),
+                quantity: a.quantity,
+                remaining: a.remaining,
+                unit,
+                status:
+                  detail.status !== 'ACTIF'
+                    ? 'Consommée'
+                    : a.remaining === 0
+                      ? 'Intégralement sortie'
+                      : a.takenQuantity > 0
+                        ? `Amputée de ${a.takenQuantity}`
+                        : 'Active',
+              };
+            })}
             rowKey={(r, i) => `${r.lot}-${i}`}
-            empty="Aucun mouvement."
+            empty="Aucun lot réservé."
           />
+
+          {notes.length ? (
+            <div className="detail-summary">
+              <div>
+                <span className="muted">Note de validation</span>
+                {notes.map((n, i) => (
+                  <p key={i} className="strong">
+                    {n}
+                  </p>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {detail.moves.length ? (
+            <>
+              <h3 className="form-section-title">Sorties enregistrées à la validation</h3>
+              <DataTable
+                columns={[
+                  { key: 'lot', header: 'Lot' },
+                  { key: 'expiry', header: 'Péremption' },
+                  {
+                    key: 'quantity',
+                    header: 'Sorti',
+                    align: 'right',
+                    render: (r) => <Qty value={r.quantity}>{r.unit ? ` ${r.unit}` : null}</Qty>,
+                  },
+                  { key: 'place', header: 'Dépôt / emplacement' },
+                  { key: 'status', header: 'Mouvement' },
+                ] as Column<{ lot: string; expiry: string; quantity: number; unit: string | null; place: string; status: string }>[]}
+                rows={detail.moves.map((m) => ({
+                  lot: m.lotNumber ?? '—',
+                  expiry: m.expiryDate ? formatDate(m.expiryDate) : '—',
+                  quantity: m.quantity,
+                  unit: m.unit,
+                  place: [m.depot, m.location].filter(Boolean).join(' / '),
+                  status: m.status === 'ACTIF' ? 'Actif' : 'Annulé',
+                }))}
+                rowKey={(r, i) => `${r.lot}-${i}`}
+                empty="Aucune sortie."
+              />
+            </>
+          ) : null}
 
           {detail.status === 'ACTIF' && (can('reservation:write') || can('reservation:decide')) ? (
             <div className="form-actions">

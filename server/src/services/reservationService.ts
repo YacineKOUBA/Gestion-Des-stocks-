@@ -3,6 +3,34 @@ import { MoveTypeCode, Prisma, type ReservationStatus } from '@prisma/client';
 import { badRequest, notFound } from '../utils/apiError';
 import { audit } from '../utils/audit';
 import { dec, toNumber } from '../utils/decimal';
+import {
+  activeAllocations,
+  cellKey,
+  computePlafond,
+  plafondPct,
+  reservedByCell,
+} from './reservationStock';
+
+/**
+ * D20 - La reservation est une PROMESSE, pas une sortie de stock.
+ *
+ * Ce que le directeur a redonne, et qui change tout le module :
+ *
+ *   1. plafond de 15 % de la quantite globale de chaque produit (cumul des
+ *      reservations ACTIF) ;
+ *   2. FEFO a la creation : les lots sont figes dans `reservation_allocations`,
+ *      lot par lot, dans l'ordre de peremption le plus proche. AUCUN mouvement
+ *      n'est ecrit — le stock physique ne bouge pas ;
+ *   3. tant qu'elle n'est pas validee, la reservation est visible dans l'etat de
+ *      stock (quantite reservee, pourcentage, stock libre) et toute sortie qui
+ *      risque de mordre dans un lot reserve declenche une confirmation ;
+ *   4. la validation, seule, cree la vraie sortie de stock et le journal des
+ *      mouvements.
+ *
+ * Consequence sur le reste du systeme : `computeThresholds` et la consommation
+ * mensuelle ne sont plus polluees par de fausses sorties. Une reservation ne
+ * pese plus sur les seuils avant d'etre reellement honoree.
+ */
 
 type Db = Prisma.TransactionClient;
 
@@ -16,6 +44,7 @@ export interface ReservationInput {
   lines: { articleId: number; quantity: number }[];
 }
 
+/** Une cellule de stock (article + lot + depot + emplacement) et ses trois totaux. */
 export interface AvailabilityRow {
   lotId: number | null;
   lotNumber: string | null;
@@ -24,10 +53,14 @@ export interface AvailabilityRow {
   depotLabel: string;
   locationId: number | null;
   locationLabel: string | null;
+  /** Stock physique de la cellule (Y). */
   quantity: number;
+  /** Quantite deja promise sur cette cellule (X). */
+  reserve: number;
+  /** Stock libre : ce que le FEFO peut reellement prendre (Y - X). */
+  libre: number;
 }
 
-/** Debut de la journee courante (UTC) : une reservation dont endDate < aujourd'hui a expire. */
 function todayStart(): Date {
   const d = new Date();
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
@@ -38,14 +71,23 @@ function dayStart(value: Date): Date {
 }
 
 /**
- * Stock disponible d'un article, detaille par lot / depot / emplacement et Classe
- * par ORDRE DE PEREMPTION CROISSANTE (FEFO : le lot qui perime le plus tot part en premier).
+ * Stock d'un article, detaille par cellule et CLASSE par ORDRE DE PEREMPTION
+ * CROISSANTE (FEFO : le lot qui perime le plus tot part en premier).
  *
- * Reservee a un seul article a la fois : aucune quantite d'un autre article (donc d'une
- * autre unite) n'entre dans le calcul. Le lot "null" correspond aux articles non
- * lot-traces ; ces lignes passent apres les lots dates (ils n'ont pas de peremption).
+ * La colonne `libre` est ce que la reservation peut prendre : le directeur a
+ * tranche que le FEFO ignore le deja reserve (decision D20 n° 2), sans quoi deux
+ * reservations successives prometraient le meme lot.
+ *
+ * Reservee a un seul article a la fois : aucune quantite d'un autre article (donc
+ * d'une autre unite) n'entre dans le calcul. Le lot "null" correspond aux
+ * articles non lot-traces ; ces lignes passent apres les lots dates (ils n'ont pas
+ * de peremption).
  */
-async function availabilityRows(articleId: number, db: Db): Promise<AvailabilityRow[]> {
+async function availabilityRows(
+  articleId: number,
+  db: Db,
+  opts: { excludeReservationId?: bigint } = {},
+): Promise<AvailabilityRow[]> {
   const article = await db.article.findUnique({
     where: { id: articleId },
     select: { isLotTracked: true },
@@ -53,22 +95,21 @@ async function availabilityRows(articleId: number, db: Db): Promise<Availability
   if (!article) throw notFound('Article introuvable');
 
   // Article lot-trace : on interroge tous ses lots. Sinon une seule "ligne" sans lot.
-  const lotIds: number[] = [];
   let lots: { id: number; lotNumber: string; expiryDate: Date | null }[] = [];
   if (article.isLotTracked) {
     lots = await db.lot.findMany({
       where: { articleId },
       select: { id: true, lotNumber: true, expiryDate: true },
     });
-    for (const l of lots) lotIds.push(l.id);
   }
   const lotById = new Map(lots.map((l) => [l.id, l]));
+  const lotIds = lots.map((l) => l.id);
   const lotFilter: Prisma.MoveWhereInput = article.isLotTracked
     ? { lotId: { in: lotIds } }
     : { lotId: null };
 
-  // Tous depots et emplacements confondus : la reservation choisit elle-meme les lots
-  // (FEFO), le client n'a pas a designating de depot dans le formulaire.
+  // Tous depots et emplacements confondus : la reservation choisit elle-meme les
+  // lots (FEFO), le client n'a pas a designer de depot dans le formulaire.
   const moves = await db.move.findMany({
     where: { articleId, status: 'ACTIF', ...lotFilter },
     select: {
@@ -95,13 +136,32 @@ async function availabilityRows(articleId: number, db: Db): Promise<Availability
       locationId: m.locationId,
       locationLabel: m.location?.label ?? null,
       quantity: 0,
+      reserve: 0,
+      libre: 0,
     };
     cur.quantity = cur.quantity + toNumber(dec(m.quantity).mul(m.sens), 3);
     map.set(key, cur);
   }
 
+  // Promesses en cours sur les memes cellules, reservation en cours de validation
+  // exclue lorsqu'on valide (ses propres parts ne doivent pas se bloquer
+  // elles-memes).
+  const reserved = reservedByCell(
+    await activeAllocations({ articleIds: [articleId], excludeReservationId: opts.excludeReservationId }, db),
+  );
+  for (const row of map.values()) {
+    const key = cellKey({
+      articleId,
+      lotId: row.lotId,
+      depotId: row.depotId,
+      locationId: row.locationId,
+    });
+    row.reserve = toNumber(reserved.get(key) ?? dec(0), 3);
+    row.libre = toNumber(dec(row.quantity).sub(dec(row.reserve)), 3);
+  }
+
   return [...map.values()]
-    .filter((r) => r.quantity > 0)
+    .filter((r) => r.libre > 0)
     .sort((a, b) => {
       // FEFO : peremption la plus proche d'abord ; les lots sans date en dernier.
       if (a.lotId == null && b.lotId != null) return 1;
@@ -117,14 +177,39 @@ async function availabilityRows(articleId: number, db: Db): Promise<Availability
     });
 }
 
-/** Disponibilite totale d'un article + detail FEFO (alimente le formulaire). */
+/**
+ * Disponibilite d'un article pour le formulaire : stock libre (FEFO), total
+ * physique, deja promis, et surtout le RESTE du plafond de 15 % — c'est cette
+ * derniere valeur qui doit plafonner le champ quantite cote client.
+ */
 export async function availability(articleId: number) {
   const rows = await availabilityRows(articleId, prisma as unknown as Db);
-  const total = rows.reduce((a, r) => a + r.quantity, 0);
+  const total = rows.reduce((a, r) => a + r.libre, 0);
+  const stockTotal = rows.reduce((a, r) => a + r.quantity, 0);
+  const reserve = rows.reduce((a, r) => a + r.reserve, 0);
+  const pct = await plafondPct();
+  const etat = computePlafond({
+    stockTotal: dec(stockTotal),
+    dejaReserve: dec(reserve),
+    demande: dec(0),
+    pct,
+  });
   return {
     articleId,
+    /** Stock libre : base du FEFO. */
     total: toNumber(dec(total), 3),
-    lignes: rows.map((r) => ({ ...r, expiryDate: r.expiryDate?.toISOString().slice(0, 10) ?? null })),
+    stockTotal: etat.stockTotal,
+    reserve: etat.dejaReserve,
+    plafond: etat.plafond,
+    pctPlafond: pct,
+    /** Ce qu'il reste autorise pour cet article, plafond moins deja promis. */
+    // Les deux termes sont deja arrondis : leur difference peut reintroduire une
+    // erreur de virgule flottante (52.849999999999994), on la referme ici.
+    plafondRestant: Math.max(0, Number((etat.plafond - etat.dejaReserve).toFixed(3))),
+    lignes: rows.map((r) => ({
+      ...r,
+      expiryDate: r.expiryDate?.toISOString().slice(0, 10) ?? null,
+    })),
   };
 }
 
@@ -154,10 +239,14 @@ async function nextRef(tx: Db, year: number): Promise<string> {
 }
 
 /**
- * Cree une reservation : le stock des articles est BLOQUE immediatement, en puisant
- * dans les lots selon la peremption la plus proche (FEFO). Chaque part reservee genere
- * un mouvement RESERVATION (sens -1) rattache a la reservation : le stock disponible
- * diminue exactement comme pour une sortie ou un pret.
+ * Cree une reservation : AUCUN mouvement n'est ecrit, le stock physique ne bouge
+ * pas. Ce qui est fige, ce sont les lots et les quantites promises
+ * (`reservation_allocations`), choisis par FEFO sur le stock LIBRE.
+ *
+ * Deux controles bloquants, dans l'ordre :
+ *   - le stock libre doit couvrir la ligne demandee ;
+ *   - le cumul des reservations ACTIF ne doit pas depasser le plafond (15 % du
+ *     stock physique, parametre `RESERVATION_PLAFOND_PCT`).
  */
 export async function createReservation(input: ReservationInput, userId: number) {
   if (!input.lines.length) throw badRequest('Ajoutez au moins un article à réserver');
@@ -201,8 +290,8 @@ export async function createReservation(input: ReservationInput, userId: number)
   // meme ordre, ce qui evite les interblocages entre reservations concurrentes.
   const articleIds = lines.map((l) => l.articleId).sort((a, b) => a - b);
 
-  // Devise portee par chaque article, reportee sur ses mouvements de blocage (meme si
-  // ces mouvements n'ont aucun montant : ils doivent rester dans la devise de l'article).
+  // Devise portee par chaque article, reportee sur les SORTIES creees a la validation
+  // (la reservation ne cree aucun mouvement, elle n'a donc rien a porter).
   const currencyByArticle = new Map<number, string>();
   for (const a of await prisma.article.findMany({
     where: { id: { in: articleIds } },
@@ -220,7 +309,7 @@ export async function createReservation(input: ReservationInput, userId: number)
       // ($executeRaw : la fonction renvoie void, illisible par $queryRaw).
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(728364112)`;
 
-      const typeId = (await tx.moveType.findUniqueOrThrow({ where: { code: 'RESERVATION' } })).id;
+      const pct = await plafondPct(tx);
       const year = input.startDate.getUTCFullYear();
       const reservation = await tx.reservation.create({
         data: {
@@ -235,54 +324,68 @@ export async function createReservation(input: ReservationInput, userId: number)
         },
       });
 
-      const today = todayStart();
       for (const line of lines) {
         const rows = await availabilityRows(line.articleId, tx);
-        const total = rows.reduce<Prisma.Decimal>((a, r) => a.add(dec(r.quantity)), new Prisma.Decimal(0));
-        if (total.lessThan(line.quantity)) {
-          const art = await tx.article.findUnique({
-            where: { id: line.articleId },
-            select: { code: true, designation: true },
-          });
+        const libre = rows.reduce<Prisma.Decimal>((a, r) => a.add(dec(r.libre)), new Prisma.Decimal(0));
+        const stockTotal = rows.reduce<Prisma.Decimal>((a, r) => a.add(dec(r.quantity)), new Prisma.Decimal(0));
+        const dejaReserve = rows.reduce<Prisma.Decimal>((a, r) => a.add(dec(r.reserve)), new Prisma.Decimal(0));
+
+        const art = await tx.article.findUnique({
+          where: { id: line.articleId },
+          select: { code: true, designation: true },
+        });
+
+        if (libre.lessThan(line.quantity)) {
           throw badRequest(
             `Stock insuffisant pour l'article ${art?.code ?? line.articleId} - ${art?.designation ?? ''} ` +
-              `(disponible : ${toNumber(total, 3)})`,
+              `(libre : ${toNumber(libre, 3)}${dejaReserve.greaterThan(0) ? `, dont ${toNumber(dejaReserve, 3)} déjà réservé` : ''})`,
           );
         }
 
-        // FEFO : on consomme les lignes deja triees par peremption croissante.
-        let reste = line.quantity;
-        for (const row of rows) {
-          if (reste.lte(0)) break;
-          const part = dec(row.quantity).greaterThan(reste) ? reste : dec(row.quantity);
-          await tx.move.create({
-            data: {
-              typeId,
-              articleId: line.articleId,
-              lotId: row.lotId,
-              quantity: toNumber(part, 3),
-              sens: -1,
-              depotId: row.depotId,
-              locationId: row.locationId,
-              partnerId: input.partnerId,
-              docNumber: reservation.ref,
-              movementDate: today,
-              observation: 'Réservation',
-              currency: currencyByArticle.get(line.articleId) ?? 'DZD',
-              reservationId: reservation.id,
-              createdBy: userId,
-            },
-          });
-          reste = reste.sub(part);
+        // Regle 1 : plafond de 15 % de la quantite globale, sur le CUMUL des
+        // reservations actives. Verifie apres la disponibilite : inutile de
+        // reprocher un plafond a quelqu'un qui n'a pas assez de stock libre.
+        const etat = computePlafond({
+          stockTotal,
+          dejaReserve,
+          demande: line.quantity,
+          pct,
+        });
+        if (etat.depasse) {
+          throw badRequest(
+            `Plafond de réservation dépassé pour l'article ${art?.code ?? line.articleId} - ${art?.designation ?? ''} : ` +
+              `maximum ${etat.pct} % du stock, soit ${etat.plafond} (stock ${etat.stockTotal}, déjà réservé ${etat.dejaReserve}, demande ${etat.demande}).`,
+            { plafond: etat },
+          );
         }
 
-        await tx.reservationLine.create({
+        const reservationLine = await tx.reservationLine.create({
           data: {
             reservationId: reservation.id,
             articleId: line.articleId,
             quantity: toNumber(line.quantity, 3),
           },
         });
+
+        // FEFO : on consomme les lignes deja triees par peremption croissante, sur
+        // leur stock LIBRE. Ce qui est ecrit ici est une promesse, pas une sortie.
+        let reste = line.quantity;
+        for (const row of rows) {
+          if (reste.lte(0)) break;
+          const part = dec(row.libre).greaterThan(reste) ? reste : dec(row.libre);
+          await tx.reservationAllocation.create({
+            data: {
+              reservationId: reservation.id,
+              reservationLineId: reservationLine.id,
+              articleId: line.articleId,
+              lotId: row.lotId,
+              depotId: row.depotId,
+              locationId: row.locationId,
+              quantity: toNumber(part, 3),
+            },
+          });
+          reste = reste.sub(part);
+        }
       }
 
       return reservation;
@@ -310,6 +413,9 @@ export async function createReservation(input: ReservationInput, userId: number)
     startDate: result.startDate,
     endDate: result.endDate,
     lines,
+    // La reservation ne cree aucun mouvement : le tracer evite qu'un tiers suppose
+    // qu'un stock a bouge alors que la promesse est virtuelle.
+    mouvementsCrees: 0,
   });
   return getReservation(result.id);
 }
@@ -325,6 +431,24 @@ const includeFull = {
       article: { select: { id: true, code: true, designation: true, unit: { select: { code: true } } } },
     },
   },
+  // D20 : le detail FEFO fige. C'est la promesse, elle reste consultable apres
+  // validation (elle explique quels lots avaient ete retenus).
+  allocations: {
+    orderBy: { id: 'asc' },
+    select: {
+      id: true,
+      articleId: true,
+      lotId: true,
+      depotId: true,
+      locationId: true,
+      quantity: true,
+      takenQuantity: true,
+      depot: { select: { label: true } },
+      location: { select: { label: true } },
+      lot: { select: { lotNumber: true, expiryDate: true } },
+    },
+  },
+  // Les SORTIES reelles creees a la validation (vide avant).
   moves: {
     orderBy: [{ lot: { expiryDate: 'asc' } }, { id: 'asc' }],
     select: {
@@ -366,6 +490,23 @@ function serialize(rows: Prisma.ReservationGetPayload<{ include: typeof includeF
       unit: l.article.unit?.code ?? null,
       quantity: toNumber(l.quantity, 3),
     })),
+    allocations: r.allocations.map((a) => ({
+      id: String(a.id),
+      articleId: a.articleId,
+      lotId: a.lotId,
+      // Identifiants ET libelles : le libelle est pour l'affichage, l'identifiant
+      // pour allowiger une action (controle d'empietement, export) sans refaire
+      // un aller-retour serveur.
+      depotId: a.depotId,
+      locationId: a.locationId,
+      lotNumber: a.lot?.lotNumber ?? null,
+      expiryDate: a.lot?.expiryDate?.toISOString().slice(0, 10) ?? null,
+      quantity: toNumber(a.quantity, 3),
+      takenQuantity: toNumber(a.takenQuantity, 3),
+      remaining: toNumber(dec(a.quantity).sub(dec(a.takenQuantity)), 3),
+      depot: a.depot.label,
+      location: a.location?.label ?? null,
+    })),
     moves: r.moves.map((m) => ({
       id: String(m.id),
       lotId: m.lotId == null ? null : Number(m.lotId),
@@ -381,7 +522,14 @@ function serialize(rows: Prisma.ReservationGetPayload<{ include: typeof includeF
   }));
 }
 
-/** Cloture par annulation (manuelle ou expiration) : les mouvements passent ANNULE. */
+/**
+ * Cloture par annulation (manuelle ou expiration).
+ *
+ * D20 : il n'y a plus rien a annuler dans le journal. Une reservation n'a jamais
+ * cree de mouvement, et les seules SORTIES qui lui sont rattachees naissent a la
+ * validation, donc apres toute annulation. La reservation sort simplement du
+ * calcul de "deja reserve", qui ne compte que les reservations ACTIF.
+ */
 async function closeAsCancelled(
   id: bigint,
   status: 'ANNULE' | 'EXPIRE',
@@ -397,11 +545,6 @@ async function closeAsCancelled(
     if (current.status !== 'ACTIF') {
       throw badRequest(`Cette réservation est déjà clôturée (${current.status})`);
     }
-    // Les mouvements ANNULE sont ignores par le calcul de stock : le stock est rendu.
-    await tx.move.updateMany({
-      where: { reservationId: id, status: 'ACTIF' },
-      data: { status: 'ANNULE', canceledBy: userId, canceledAt: new Date() },
-    });
     return tx.reservation.update({
       where: { id },
       data: {
@@ -415,45 +558,224 @@ async function closeAsCancelled(
   return updated;
 }
 
-/** Cas 1 : l'utilisateur annule la reservation. Le stock redevient disponible. */
+/** Cas 1 : l'utilisateur annule la reservation. La promesse s'eteint, rien n'a bougé au stock. */
 export async function cancelReservation(id: bigint, userId: number) {
   const closed = await closeAsCancelled(id, 'ANNULE', 'MANUEL', userId);
   await audit(userId, 'ANNULATION', 'reservation', String(id), { ref: closed.ref, reason: 'MANUEL' });
   return getReservation(id);
 }
 
+/** Stock physique d'une cellule (Y). Sortie de stock : elle passe par les mouvements. */
+async function cellStock(
+  cell: { articleId: number; lotId: number | null; depotId: number; locationId: number | null },
+  db: Db,
+): Promise<Prisma.Decimal> {
+  const moves = await db.move.findMany({
+    where: {
+      articleId: cell.articleId,
+      status: 'ACTIF',
+      depotId: cell.depotId,
+      locationId: cell.locationId,
+      lotId: cell.lotId,
+    },
+    select: { quantity: true, sens: true },
+  });
+  return moves.reduce<Prisma.Decimal>((a, m) => a.add(dec(m.quantity).mul(m.sens)), new Prisma.Decimal(0));
+}
+
+/** Une sortie a creer a la validation, avec la raison de son origine. */
+interface SortieValidée {
+  articleId: number;
+  lotId: number | null;
+  depotId: number;
+  locationId: number | null;
+  quantity: Prisma.Decimal;
+  /** Cellule promise d'origine si la sortie rejoue le FEFO apres une amputation. */
+  depuisAllocation?: bigint;
+}
+
 /**
- * Cas 2 : l'utilisateur VALIDE la reservation (l'acteur a recupere sa reservation).
- * Les mouvements de blocage deviennent de vraies SORTIES : le stock reste retire.
- * Trace dans le journal d'audit comme une VALIDATION (et non une simple modification),
- * pour qu'on retrouve d'un coup d'oeil les reservations validees et leur validateur.
+ * Cas 2 : l'utilisateur VALIDE la reservation. C'est le SEUL moment ou le stock
+ * bouge : des SORTIES reelles sont creees, une par part promise.
+ *
+ * Regle 4 du directeur :
+ *   - normally, chaque part promise suffit : le reliquat sort du lot fige ;
+ *   - si un lot promis a ete ampute par une sortie anterieure autorisee, on le
+ *     signale, on sert ce qui reste, puis on rejoue un FEFO sur le stock
+ *     ACTUEL pour extraire le manque ;
+ *   - si meme ce re-FEFO ne suffit pas, la validation est REFUSEE : la
+ *     reservation reste ACTIF et aucun mouvement n'est cree. Mieux vaut une
+ *     reservation honoree en retard qu'un stock sorti deux fois.
+ *
+ * Trace dans le journal d'audit comme une VALIDATION, pour qu'on retrouve d'un
+ * coup d'oeil les reservations honorees et leur validateur.
  */
 export async function validateReservation(id: bigint, userId: number) {
+  const notes: string[] = [];
+  const amputations: Array<{ reservationId: string; allocationId: string; lotNumber: string | null; quantite: number }> = [];
+  const reconstitutions: Array<{ articleId: number; lotNumber: string | null; quantity: number }> = [];
+
   const updated = await prisma.$transaction(async (tx) => {
     const current = await tx.reservation.findUnique({
       where: { id },
-      select: { status: true, ref: true },
+      select: { status: true, ref: true, partnerId: true },
     });
     if (!current) throw notFound('Réservation introuvable');
     if (current.status !== 'ACTIF') {
       throw badRequest(`Cette réservation est déjà clôturée (${current.status})`);
     }
+
     const sortieId = (await tx.moveType.findUniqueOrThrow({ where: { code: MoveTypeCode.SORTIE } })).id;
-    await tx.move.updateMany({
-      where: { reservationId: id, status: 'ACTIF' },
-      data: { typeId: sortieId },
+    const currencyByArticle = new Map<number, string>();
+    for (const a of await tx.article.findMany({
+      where: { reservationLines: { some: { reservationId: id } } },
+      select: { id: true, currency: true },
+    })) {
+      currencyByArticle.set(a.id, a.currency);
+    }
+
+    const allocations = await tx.reservationAllocation.findMany({
+      where: { reservationId: id },
+      select: {
+        id: true,
+        articleId: true,
+        lotId: true,
+        depotId: true,
+        locationId: true,
+        quantity: true,
+        takenQuantity: true,
+        lot: { select: { lotNumber: true } },
+      },
+      orderBy: { id: 'asc' },
     });
+
+    const sorties: SortieValidée[] = [];
+
+    for (const a of allocations) {
+      await tx.$queryRaw`SELECT id FROM "articles" WHERE id = ${a.articleId} FOR UPDATE`;
+
+      const restant = dec(a.quantity).sub(dec(a.takenQuantity));
+      const cell = {
+        articleId: a.articleId,
+        lotId: a.lotId,
+        depotId: a.depotId,
+        locationId: a.locationId,
+      };
+
+      // Note d'information D20 : la part a deja ete amputee par une sortie
+      // anterieure autorisee par l'utilisateur.
+      if (dec(a.takenQuantity).greaterThan(0)) {
+        amputations.push({
+          reservationId: String(id),
+          allocationId: String(a.id),
+          lotNumber: a.lot?.lotNumber ?? null,
+          quantite: toNumber(dec(a.takenQuantity), 3),
+        });
+        const stockApres = await cellStock(cell, tx);
+        if (stockApres.lessThanOrEqualTo(0)) {
+          notes.push(`Lot ${a.lot?.lotNumber ?? 'sans lot'} totalement épuisé.`);
+        } else {
+          notes.push(
+            `Le lot ${a.lot?.lotNumber ?? 'sans lot'} a été touché de ${toNumber(dec(a.takenQuantity), 3)} unités avant validation.`,
+          );
+        }
+      }
+
+      if (restant.lessThanOrEqualTo(0)) continue;
+
+      // Stock libre de la cellule promise, en ignorant les parts de CETTE
+      // reservation (qui sont en train d'etre honorees, pas de lui bloquer).
+      const libres = reservedByCell(
+        await activeAllocations({ articleIds: [a.articleId], excludeReservationId: id }, tx),
+      );
+      const libreCellule = await cellStock(cell, tx).then((y) =>
+        y.sub(libres.get(cellKey(cell)) ?? new Prisma.Decimal(0)),
+      );
+
+      if (libreCellule.greaterThanOrEqualTo(restant)) {
+        sorties.push({ ...cell, quantity: restant, depuisAllocation: a.id });
+        continue;
+      }
+
+      // La cellule promise ne peut plus tenir le reliquat : on sert ce qui reste
+      // et on rejoue un FEFO sur le stock actuel (regle 4).
+      const manque = restant.sub(libreCellule);
+      if (libreCellule.greaterThan(0)) {
+        sorties.push({ ...cell, quantity: libreCellule, depuisAllocation: a.id });
+      }
+
+      const repli = await availabilityRows(a.articleId, tx, { excludeReservationId: id });
+      const libreTotal = repli.reduce<Prisma.Decimal>((s, r) => s.add(dec(r.libre)), new Prisma.Decimal(0));
+      if (libreTotal.lessThan(manque)) {
+        throw badRequest(
+          `Validation impossible : le stock réellement disponible ne couvre plus la réservation ${current.ref}. ` +
+            `Manque ${toNumber(manque, 3)} unité(s) sur l'article ${a.articleId}. ` +
+            `Aucune sortie n'a été enregistrée et la réservation reste active : réapprovisionnez le stock puis validez à nouveau.`,
+        );
+      }
+
+      let reste = manque;
+      for (const r of repli) {
+        if (reste.lte(0)) break;
+        const part = dec(r.libre).greaterThan(reste) ? reste : dec(r.libre);
+        sorties.push({
+          articleId: a.articleId,
+          lotId: r.lotId,
+          depotId: r.depotId,
+          locationId: r.locationId,
+          quantity: part,
+        });
+        reconstitutions.push({
+          articleId: a.articleId,
+          lotNumber: r.lotNumber,
+          quantity: toNumber(part, 3),
+        });
+        reste = reste.sub(part);
+      }
+      notes.push(
+        `Lot ${a.lot?.lotNumber ?? 'sans lot'} amputé : ${toNumber(manque, 3)} unité(s) reprises sur le stock disponible (FEFO).`,
+      );
+    }
+
+    const today = new Date();
+    for (const s of sorties) {
+      await tx.move.create({
+        data: {
+          typeId: sortieId,
+          articleId: s.articleId,
+          lotId: s.lotId,
+          quantity: toNumber(s.quantity, 3),
+          sens: -1,
+          depotId: s.depotId,
+          locationId: s.locationId,
+          partnerId: current.partnerId,
+          docNumber: current.ref,
+          movementDate: today,
+          observation: 'Réservation validée',
+          currency: currencyByArticle.get(s.articleId) ?? 'DZD',
+          reservationId: id,
+          createdBy: userId,
+        },
+      });
+    }
+
     return tx.reservation.update({
       where: { id },
-      data: { status: 'REALISE', closedBy: userId, closedAt: new Date(), closeReason: 'VALIDEE' },
+      data: { status: 'REALISE', closedBy: userId, closedAt: today, closeReason: 'VALIDEE' },
     });
   });
+
   await audit(userId, 'VALIDATION', 'reservation', String(id), {
     ref: updated.ref,
     action: 'VALIDATION',
     status: 'REALISE',
+    sortiesCreees: true,
+    notes,
+    ...(amputations.length ? { amputations } : {}),
+    ...(reconstitutions.length ? { reconstitutions } : {}),
   });
-  return getReservation(id);
+
+  return { ...(await getReservation(id)), notes };
 }
 
 /**
@@ -466,18 +788,13 @@ async function expireOne(tx: Db, id: bigint): Promise<boolean> {
     where: { id, status: 'ACTIF' },
     data: { status: 'EXPIRE', closedAt: new Date(), closedBy: null, closeReason: 'EXPIRE' },
   });
-  if (closed.count === 0) return false;
-  // Les mouvements ANNULE sont ignores par le calcul de stock : le stock est rendu.
-  await tx.move.updateMany({
-    where: { reservationId: id, status: 'ACTIF' },
-    data: { status: 'ANNULE', canceledAt: new Date() },
-  });
-  return true;
+  return closed.count > 0;
 }
 
 /**
- * Cas 3 : la date de fin est depassee -> annulation automatique, le stock est rendu.
- * Appele a chaque lecture des reservations et par une balayage periodique.
+ * Cas 3 : la date de fin est depassee -> annulation automatique. La promesse
+ * s'eteint ; le stock n'avait jamais bouge. Appele a chaque lecture des
+ * reservations.
  */
 export async function expireReservations() {
   const limit = todayStart();
@@ -523,5 +840,22 @@ export async function synthesis() {
     prisma.reservation.count({ where: { status: 'ACTIF', endDate: { gte: today, lt: dans7 } } }),
     prisma.reservation.count({ where: { status: 'REALISE' } }),
   ]);
-  return { actives, expirees, expire7, realises };
+  // Quantites promisees, par article : alimente la ligne "deja reserve" de l'etat de stock.
+  const parts = await activeAllocations();
+  const parArticle = new Map<number, Prisma.Decimal>();
+  for (const p of parts) {
+    parArticle.set(p.articleId, (parArticle.get(p.articleId) ?? new Prisma.Decimal(0)).add(p.remaining));
+  }
+  return {
+    actives,
+    expirees,
+    expire7,
+    realises,
+    articlesReserves: parArticle.size,
+    quantiteReservee: toNumber(
+      [...parArticle.values()].reduce<Prisma.Decimal>((a, d) => a.add(d), new Prisma.Decimal(0)),
+      3,
+    ),
+    plafondPct: await plafondPct(),
+  };
 }

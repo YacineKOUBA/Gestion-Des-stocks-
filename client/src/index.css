@@ -174,6 +174,10 @@ a {
   white-space: nowrap;
   vertical-align: bottom;
 }
+/* Colonne "Deja reserve" : le nombre et son pourcentage restent sur une meme ligne (D20). */
+.reserved-cell {
+  white-space: nowrap;
+}
 
 /* Cards */
 .card {

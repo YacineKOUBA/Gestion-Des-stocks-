@@ -3,7 +3,9 @@ import { articlesApi, loansApi, lotsApi, referentialApi, stockApi } from '../ser
 import { errorMessage, useAsync } from '../hooks/useAsync';
 import { Badge, Card, ErrorMessage, Field, Modal, PageHeader, Spinner } from '../components/ui';
 import { DataTable, type Column } from '../components/DataTable';
-import type { Loan, LoanType, RestitutionType } from '../types';
+import { OverlapConfirm } from '../components/OverlapConfirm';
+import { overlapConfirmation } from '../services/api';
+import type { Loan, LoanType, ReservationOverlapConfirmation, RestitutionType } from '../types';
 import { Qty } from '../components/Qty';
 import { formatDate, formatNumber, todayInput } from '../utils/format';
 import { useAuth } from '../context/AuthContext';
@@ -154,6 +156,9 @@ function LoanFormModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
   });
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // D20 : un PRET retire du stock, il peut donc empieter sur une reservation.
+  const [overlap, setOverlap] = useState<ReservationOverlapConfirmation | null>(null);
+  const dernierPayload = useRef<Parameters<typeof loansApi.create>[0] | null>(null);
   // false des que l'utilisateur choisit lui-meme un depot : on ne propose plus rien ensuite.
   const depotAuto = useRef(true);
 
@@ -197,23 +202,31 @@ function LoanFormModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
+    await envoyer({
+      type: form.type,
+      partnerId: Number(form.partnerId),
+      articleId: Number(form.articleId),
+      lotId: form.lotId ? Number(form.lotId) : null,
+      depotId: form.depotId ? Number(form.depotId) : null,
+      locationId: form.locationId ? Number(form.locationId) : null,
+      quantity: Number(form.quantity),
+      loanDate: form.loanDate,
+      observation: form.observation || null,
+    });
+  }
+
+  async function envoyer(payload: Parameters<typeof loansApi.create>[0]) {
     setSubmitting(true);
     setError(null);
+    dernierPayload.current = payload;
     try {
-      await loansApi.create({
-        type: form.type,
-        partnerId: Number(form.partnerId),
-        articleId: Number(form.articleId),
-        lotId: form.lotId ? Number(form.lotId) : null,
-        depotId: form.depotId ? Number(form.depotId) : null,
-        locationId: form.locationId ? Number(form.locationId) : null,
-        quantity: Number(form.quantity),
-        loanDate: form.loanDate,
-        observation: form.observation || null,
-      });
+      await loansApi.create(payload);
+      setOverlap(null);
       onSaved();
     } catch (err) {
-      setError(errorMessage(err, 'Création impossible'));
+      const conflict = overlapConfirmation(err);
+      if (conflict) setOverlap(conflict);
+      else setError(errorMessage(err, 'Création impossible'));
     } finally {
       setSubmitting(false);
     }
@@ -355,6 +368,18 @@ function LoanFormModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
           </button>
         </div>
       </form>
+
+      {overlap ? (
+        <OverlapConfirm
+          conflict={overlap}
+          busy={submitting}
+          onCancel={() => setOverlap(null)}
+          onConfirm={() => {
+            const p = dernierPayload.current;
+            if (p) void envoyer({ ...p, confirmToken: overlap.confirmToken });
+          }}
+        />
+      ) : null}
     </Modal>
   );
 }
@@ -368,21 +393,32 @@ function RestitutionModal({ loan, onClose, onSaved }: { loan: Loan; onClose: () 
   });
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // D20 : restituer un EMPRUNT retire du stock, donc peut empieter sur une reservation.
+  const [overlap, setOverlap] = useState<ReservationOverlapConfirmation | null>(null);
+  const dernierPayload = useRef<Parameters<typeof loansApi.restitute>[0] | null>(null);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
+    await envoyer({
+      loanId: loan.id,
+      type: form.type,
+      quantity: Number(form.quantity),
+      restDate: form.restDate,
+    });
+  }
+
+  async function envoyer(payload: Parameters<typeof loansApi.restitute>[0]) {
     setSubmitting(true);
     setError(null);
+    dernierPayload.current = payload;
     try {
-      await loansApi.restitute({
-        loanId: loan.id,
-        type: form.type,
-        quantity: Number(form.quantity),
-        restDate: form.restDate,
-      });
+      await loansApi.restitute(payload);
+      setOverlap(null);
       onSaved();
     } catch (err) {
-      setError(errorMessage(err, 'Restitution impossible'));
+      const conflict = overlapConfirmation(err);
+      if (conflict) setOverlap(conflict);
+      else setError(errorMessage(err, 'Restitution impossible'));
     } finally {
       setSubmitting(false);
     }
@@ -434,6 +470,18 @@ function RestitutionModal({ loan, onClose, onSaved }: { loan: Loan; onClose: () 
           </button>
         </div>
       </form>
+
+      {overlap ? (
+        <OverlapConfirm
+          conflict={overlap}
+          busy={submitting}
+          onCancel={() => setOverlap(null)}
+          onConfirm={() => {
+            const p = dernierPayload.current;
+            if (p) void envoyer({ ...p, confirmToken: overlap.confirmToken });
+          }}
+        />
+      ) : null}
     </Modal>
   );
 }

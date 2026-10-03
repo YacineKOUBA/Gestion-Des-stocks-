@@ -5,7 +5,7 @@ import { Badge, Card, ErrorMessage, Modal, PageHeader, Spinner, observationTone 
 import { DataTable, type Column } from '../components/DataTable';
 import { Qty } from '../components/Qty';
 import type { StockRow, ThresholdRow } from '../types';
-import { formatDate, formatNumber } from '../utils/format';
+import { formatDate, formatNumber, formatPercent } from '../utils/format';
 
 export function StockPage() {
   const [search, setSearch] = useState('');
@@ -47,7 +47,27 @@ export function StockPage() {
         ] as Column<StockRow>[])
       : []),
     { key: 'unit', header: 'Unité de mesure' },
-    { key: 'quantity', header: 'Stock', align: 'right', render: (r) => <Qty value={r.quantity} /> },
+    { key: 'quantity', header: 'Quantité', align: 'right', render: (r) => <Qty value={r.quantity} /> },
+    {
+      key: 'reservedQuantity',
+      header: 'Déjà réservé',
+      align: 'right',
+      render: (r) =>
+        r.reservedQuantity > 0 ? (
+          <span className="reserved-cell">
+            <Qty value={r.reservedQuantity} />
+            <span className="muted"> ({formatPercent(r.reservedPercent)})</span>
+          </span>
+        ) : (
+          <span className="muted">—</span>
+        ),
+    },
+    {
+      key: 'freeQuantity',
+      header: 'Stock libre',
+      align: 'right',
+      render: (r) => <Qty value={r.freeQuantity} />,
+    },
   ];
 
   return (
@@ -217,6 +237,18 @@ function ThresholdDetail({ row, onClose }: { row: ThresholdRow; onClose: () => v
 function ArticleStockDetail({ articleId, onClose }: { articleId: number; onClose: () => void }) {
   const detail = useAsync(() => stockApi.article(articleId), [articleId]);
 
+  // Totaux des promesses : le detail par lot/emplacement n additionne pas lui-meme.
+  const totaux = (detail.data?.lignes ?? []).reduce(
+    (a, l) => ({
+      reserved: a.reserved + (l.reservedQuantity ?? 0),
+      free: a.free + (l.freeQuantity ?? l.quantity),
+    }),
+    { reserved: 0, free: 0 },
+  );
+  const reservedPct = detail.data?.stockDisponible
+    ? (totaux.reserved / detail.data.stockDisponible) * 100
+    : 0;
+
   return (
     <Modal title="Détail du stock" onClose={onClose}>
       {detail.error ? <ErrorMessage message={detail.error} /> : null}
@@ -228,6 +260,19 @@ function ArticleStockDetail({ articleId, onClose }: { articleId: number; onClose
             <div>
               <span className="muted">Stock disponible</span>
               <strong><Qty value={detail.data.stockDisponible} /></strong>
+            </div>
+            <div>
+              <span className="muted">Déjà réservé</span>
+              <strong>
+                <Qty value={totaux.reserved} />
+                {totaux.reserved > 0 ? (
+                  <span className="muted"> ({formatPercent(reservedPct)})</span>
+                ) : null}
+              </strong>
+            </div>
+            <div>
+              <span className="muted">Stock libre</span>
+              <strong><Qty value={totaux.free} /></strong>
             </div>
             <div>
               <span className="muted">Encours (commandes)</span>
@@ -250,8 +295,28 @@ function ArticleStockDetail({ articleId, onClose }: { articleId: number; onClose
               { key: 'location', header: 'Emplacement' },
               { key: 'lot', header: 'Lot' },
               { key: 'expiryDate', header: 'Péremption', render: (r) => formatDate(r.expiryDate) },
-    { key: 'unit', header: 'Unité de mesure' },
-              { key: 'quantity', header: 'Qté', align: 'right', render: (r) => <Qty value={r.quantity} /> },
+              { key: 'unit', header: 'Unité de mesure' },
+              { key: 'quantity', header: 'Quantité', align: 'right', render: (r) => <Qty value={r.quantity} /> },
+              {
+                key: 'reservedQuantity',
+                header: 'Déjà réservé',
+                align: 'right',
+                render: (r) =>
+                  r.reservedQuantity > 0 ? (
+                    <span className="reserved-cell">
+                      <Qty value={r.reservedQuantity} />
+                      <span className="muted"> ({formatPercent(r.reservedPercent)})</span>
+                    </span>
+                  ) : (
+                    <span className="muted">—</span>
+                  ),
+              },
+              {
+                key: 'freeQuantity',
+                header: 'Stock libre',
+                align: 'right',
+                render: (r) => <Qty value={r.freeQuantity} />,
+              },
             ]}
             rows={detail.data.lignes}
             rowKey={(r, i) => `${r.lot ?? ''}-${r.depot ?? ''}-${i}`}

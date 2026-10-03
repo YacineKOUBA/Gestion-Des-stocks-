@@ -10,9 +10,12 @@ export function errorHandler(
   _next: NextFunction,
 ) {
   if (err instanceof ApiError) {
-    return res
-      .status(err.status)
-      .json({ error: true, code: err.code, message: err.message });
+    return res.status(err.status).json({
+      error: true,
+      code: err.code,
+      message: err.message,
+      ...(err.details ? { details: err.details } : {}),
+    });
   }
   if (err instanceof ZodError) {
     return res.status(400).json({

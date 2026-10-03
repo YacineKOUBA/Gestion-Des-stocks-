@@ -59,7 +59,10 @@ enum MoveTypeCode {
   PERTE
   AJUSTEMENT
   RETOUR
-  RESERVATION
+  // D20 : `RESERVATION` a ete supprime. Une reservation ne cree plus de mouvement
+  // avant sa validation ; elle fige des lots dans `reservation_allocations`.
+  // Ce type faisait entrer de fausses sorties dans le stock et dans la consommation
+  // mensuelle, donc dans le calcul des seuils.
 }
 
 enum MoveStatus {
@@ -239,6 +242,8 @@ model Depot {
   inventories Inventory[]
   bons        Bon[]          @relation("BonDepot")
   bonsDest    Bon[]          @relation("BonDepotDest")
+  // D20 : lots figes par une reservation (FEFO a la creation).
+  allocations ReservationAllocation[]
 }
 
 model Location {
@@ -249,6 +254,8 @@ model Location {
 
   moves     Move[] @relation("MoveLocation")
   movesDest Move[] @relation("MoveLocationDest")
+  // D20 : lots figes par une reservation (FEFO a la creation).
+  allocations ReservationAllocation[]
   inventoryLines InventoryLine[]
 }
 
@@ -291,6 +298,8 @@ model Article {
   loans            Loan[]
   bonLines         BonLine[]
   reservationLines ReservationLine[]
+  // D20 : quantites figees par reservation, lot par lot.
+  allocations      ReservationAllocation[]
 
   @@index([familyId])
   @@index([categoryId])
@@ -352,6 +361,8 @@ model Lot {
   movements      Move[]
   inventoryLines InventoryLine[]
   bonLines       BonLine[]
+  // D20 : quantites reservees sur ce lot, figees a la creation de la reservation.
+  allocations    ReservationAllocation[]
 
   @@unique([articleId, lotNumber])
   @@index([expiryDate])
@@ -419,11 +430,21 @@ model Move {
 }
 
 // --------------------------- RESERVATIONS ---------------------------
-// Une reservation BLOQUE du stock pour un acteur et une periode donnees.
-// Chaque article reserve genere un mouvement de type RESERVATION (sens -1) : le stock
-// disponible baisse donc exactement comme pour une sortie ou un pret. A l'annulation
-// (manuelle ou automatique a l'echeance) ces mouvements passent en ANNULE et le stock
-// redevient disponible ; a la realisation ils deviennent de vraies SORTIES.
+// D20 : une reservation est une PROMESSE, pas une sortie de stock. Elle ne bouge plus
+// le stock : elle fige, dans `ReservationAllocation`, quels lots et quelles quantites
+// sont promis (FEFO, peremption la plus proche d'abord) ; le stock physique ne change
+// qu'a la VALIDATION, qui cree les mouvements SORTIE.
+//
+// Consequences sur l'ancien modele :
+//   - le type de mouvement RESERVATION n'existe plus (supprime de MoveTypeCode et de
+//     la table MoveType) : il faisait entrer de fausses sorties dans le stock et dans
+//     la consommation mensuelle, donc dans les seuils ;
+//   - aucun mouvement n'est ecrit a la creation. `Reservation.moves` ne contient donc
+//     plus que les SORTIES creees a la validation, ce qui reste utile a la tracabilite
+//     (colonnes reservationId, quantite, lot et acteur herites de la reservation) ;
+//   - l'annulation et l'expiration n'ont plus rien a annuler dans le journal : elles
+//     font simplement sortir la reservation du calcul de "deja reserve", qui ne compte
+//     que les reservations ACTIF.
 
 enum ReservationStatus {
   ACTIF
@@ -453,6 +474,7 @@ model Reservation {
   closeReason String?           @map("close_reason") @db.VarChar(20)
 
   lines ReservationLine[]
+  allocations ReservationAllocation[]
   moves Move[]
 
   @@index([status])
@@ -469,8 +491,42 @@ model ReservationLine {
   article       Article     @relation(fields: [articleId], references: [id])
   quantity      Decimal     @db.Decimal(14, 3)
 
+  allocations ReservationAllocation[]
+
   @@index([articleId])
   @@map("reservation_lines")
+}
+
+// D20 : le detail FEFO fige a la creation. C'est cette table, et non le stock, qui
+// dit ce qu'une reservation a reellement promis, lot par lot. Sans elle, impossible
+// de savoir apres coup quelles unites une sortie autorisee a amputees, ni de sortir
+// a la validation exactement les lots vus par le magasinier.
+//
+// `takenQuantity` trace l'amputation : quantite de cette part qui a ete consommee
+// par une sortie exterieure avec accord de l'utilisateur (regle 3 de D20). Elle vaut
+// 0 en regime normal, et permet de reconstituer le manque par un nouveau FEFO a la
+// validation (regle 4).
+model ReservationAllocation {
+  id             BigInt          @id @default(autoincrement()) @db.BigInt
+  reservationId  BigInt
+  reservation    Reservation     @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  reservationLineId BigInt
+  reservationLine ReservationLine @relation(fields: [reservationLineId], references: [id], onDelete: Cascade)
+  articleId      Int
+  article        Article         @relation(fields: [articleId], references: [id])
+  lotId          Int?
+  lot            Lot?            @relation(fields: [lotId], references: [id])
+  depotId        Int
+  depot          Depot           @relation(fields: [depotId], references: [id])
+  locationId     Int?
+  location       Location?       @relation(fields: [locationId], references: [id])
+  quantity       Decimal         @db.Decimal(14, 3)
+  takenQuantity  Decimal         @default(0) @map("taken_quantity") @db.Decimal(14, 3)
+
+  @@index([articleId])
+  @@index([lotId])
+  @@index([reservationId])
+  @@map("reservation_allocations")
 }
 
 // --------------------------- INVENTAIRE ---------------------------

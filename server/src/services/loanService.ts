@@ -156,6 +156,7 @@ export async function createLoan(
     quantity: number;
     loanDate: Date;
     observation?: string | null;
+    confirmToken?: string | null;
   },
   userId: number,
 ) {
@@ -178,6 +179,8 @@ export async function createLoan(
         depotId: target.depotId,
         partnerId: data.partnerId,
         observation: data.observation ?? (data.type === LoanType.PRET ? 'PRÊT' : 'EMPRUNT'),
+        // D20 : un PRET est une sortie de stock, il passe par le controle d'empietement.
+        confirmToken: data.confirmToken ?? null,
       },
       userId,
       tx,
@@ -204,7 +207,7 @@ export async function createLoan(
 }
 
 export async function createRestitution(
-  data: { loanId: bigint; type: RestitutionType; quantity: number; restDate: Date },
+  data: { loanId: bigint; type: RestitutionType; quantity: number; restDate: Date; confirmToken?: string | null },
   userId: number,
 ) {
   const rest = await prisma.$transaction(async (tx) => {
@@ -244,6 +247,8 @@ export async function createRestitution(
         depotId: target.depotId,
         partnerId: loan.partnerId,
         observation: `RESTITUTION (${data.type})`,
+        // D20 : une RESTITUTION_EMPRUNT sort du stock, elle est donc controlee.
+        confirmToken: data.confirmToken ?? null,
       },
       userId,
       tx,

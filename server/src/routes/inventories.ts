@@ -46,7 +46,15 @@ router.post('/:id/lines/:lineId/count', requirePermission('inventory:count'), as
 router.post('/:id/lines/:lineId/validate', requirePermission('inventory:decide'), async (req, res) => {
   const lineId = toBigInt(req.params.lineId);
   const data = parse(inventoryValidateSchema, req.body);
-  res.json(await inventoryService.validateLine(lineId, data.decision, data.lossReason ?? undefined, req.user!.id));
+  res.json(
+    await inventoryService.validateLine(
+      lineId,
+      data.decision,
+      data.lossReason ?? undefined,
+      req.user!.id,
+      data.confirmToken ?? null,
+    ),
+  );
 });
 
 router.post('/:id/close', requirePermission('inventory:decide'), async (req, res) => {

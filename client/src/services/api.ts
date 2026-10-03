@@ -1,4 +1,4 @@
-import type { Paged } from '../types';
+import type { Paged, ReservationOverlapConfirmation } from '../types';
 
 const TOKEN_KEY = 'gdtrading_token';
 
@@ -23,6 +23,25 @@ export class ApiError extends Error {
     this.code = code;
     this.details = details;
   }
+}
+
+/**
+ * D20 : quand une operation retirant du stock empieterait sur une reservation, le
+ * serveur repond 409 RESERVATION_EMPIETEMENT avec le detail du conflit et un jeton
+ * signe. Le client affiche la confirmation, puis renvoie le jeton avec la MEME
+ * operation : c'est la seule facon pour lui de rejouer l'ecriture sans la retaper.
+ */
+export function overlapConfirmation(error: unknown): ReservationOverlapConfirmation | null {
+  if (!(error instanceof ApiError) || error.status !== 409) return null;
+  // Le serveur pose le code generique CONFLICT a la racine et le code precis
+  // RESERVATION_EMPIETEMENT dans details : on accepte les deux emplacements.
+  const details = error.details as
+    | { code?: string; confirmation?: ReservationOverlapConfirmation }
+    | undefined;
+  if (error.code !== 'RESERVATION_EMPIETEMENT' && details?.code !== 'RESERVATION_EMPIETEMENT') {
+    return null;
+  }
+  return details?.confirmation?.confirmToken ? details.confirmation : null;
 }
 
 type QueryValue = string | number | boolean | null | undefined;

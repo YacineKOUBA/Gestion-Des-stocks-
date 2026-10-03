@@ -163,7 +163,14 @@ export interface StockRow {
   location?: string | null;
   lot?: string | null;
   expiryDate?: string | null;
+  /** Quantite brute : stock physique, reservations non deduites (colonne Quantite). */
   quantity: number;
+  /** Quantite deja promisee par les reservations ACTIF (colonne Deja reserve). */
+  reservedQuantity: number;
+  /** Part promisee en pourcentage du stock brut, pour la meme colonne. */
+  reservedPercent: number;
+  /** Stock reelement engageable : brut moins promis (colonne Stock libre). */
+  freeQuantity: number;
 }
 
 export interface ThresholdRow {
@@ -326,6 +333,52 @@ export interface ReservationMove {
   status: 'ACTIF' | 'ANNULE';
 }
 
+/**
+ * D20 : la promesse figee a la creation (FEFO sur le stock libre). Elle existe des
+ * la creation, avant tout mouvement ; `takenQuantity` compte ce qui a deja ete
+ * ampute par une operation confirmee, `remaining` ce qui reste promis.
+ */
+export interface ReservationAllocation {
+  id: string;
+  articleId: number;
+  lotId: number | null;
+  depotId: number;
+  locationId: number | null;
+  lotNumber: string | null;
+  expiryDate: string | null;
+  quantity: number;
+  takenQuantity: number;
+  remaining: number;
+  depot: string;
+  location: string | null;
+}
+
+/**
+ * D20, regle 3 : conflit renvoye en HTTP 409 (code RESERVATION_EMPIETEMENT) quand
+ * une operation retirant du stock empieterait sur une promesse.
+ *
+ *   Y = stockCellule (stock physique du lot)
+ *   X = reserve       (quantite promise sur ce lot)
+ *   Z = quantite      (ce que l'operation retire)
+ *   overlap = X + Z − Y, exactement ce que l'accord autorise a prelever.
+ */
+export interface ReservationOverlapConfirmation {
+  stockCellule: number;
+  reserve: number;
+  quantite: number;
+  overlap: number;
+  lotNumber: string | null;
+  lotId: number | null;
+  depotId: number;
+  locationId: number | null;
+  articleId: number;
+  operation: string;
+  reservations: { id: string; ref: string; amputee: number }[];
+  message: string;
+  /** Jeton signe, a renvoyer tel quel avec la meme operation pour confirmer. */
+  confirmToken: string;
+}
+
 export interface Reservation {
   id: string;
   ref: string;
@@ -343,12 +396,24 @@ export interface Reservation {
   closedAt: string | null;
   closeReason: string | null;
   lines: ReservationLine[];
+  /** Promesse figee a la creation (D20) : visible des l'ecran de detail. */
+  allocations: ReservationAllocation[];
   moves: ReservationMove[];
 }
 
 export interface ReservationAvailability {
   articleId: number;
+  /** Stock libre total : base du FEFO et plafond du champ quantite. */
   total: number;
+  /** Stock physique total de l'article. */
+  stockTotal: number;
+  /** Quantite deja promise par les reservations ACTIF. */
+  reserve: number;
+  /** Plafond de reservation : pctPlafond % du stock physique. */
+  plafond: number;
+  pctPlafond: number;
+  /** Ce qu'il reste autorise pour cet article (plafond moins deja reserve). */
+  plafondRestant: number;
   lignes: {
     lotId: number | null;
     lotNumber: string | null;
@@ -357,7 +422,12 @@ export interface ReservationAvailability {
     depotLabel: string;
     locationId: number | null;
     locationLabel: string | null;
+    /** Stock physique de la cellule. */
     quantity: number;
+    /** Deja promis sur la cellule. */
+    reserve: number;
+    /** Reste mobilisable sur la cellule : quantity − reserve. */
+    libre: number;
   }[];
 }
 
