@@ -71,6 +71,12 @@ export interface ReservedFilter {
   familyId?: number;
   search?: string;
   /**
+   * D21 : ne garder que les promesses de cet acteur. Utilise par le plafond, qui
+   * porte sur le cumul des promesses d'un acteur et non sur la reserve globale du
+   * produit. Sans ce filtre, deux acteurs concurrents seVerifieraient l'un l'autre.
+   */
+  partnerId?: number;
+  /**
    * Exclut une reservation du calcul. Indispensable pendant la validation : la
    * reservation en cours de validation est encore ACTIF, ses propres parts
    * seraient donc comptees comme reservees et son propre stock passerait pour
@@ -89,12 +95,15 @@ export async function activeAllocations(
   filter: ReservedFilter = {},
   db: Db = prisma as unknown as Db,
 ): Promise<ReservedPart[]> {
-  const where: Prisma.ReservationAllocationWhereInput = {
-    reservation: {
-      status: 'ACTIF',
-      ...(filter.excludeReservationId != null ? { id: { not: filter.excludeReservationId } } : {}),
-    },
+  // Le filtre sur la reservation est construit d'un bloc : `reservation` est une
+  // relation, donc ses criteres sont tous dans le meme objet.
+  const reservation: Prisma.ReservationWhereInput = {
+    status: 'ACTIF',
+    // D21 : ne garder que les promesses de cet acteur.
+    ...(filter.partnerId != null ? { partnerId: filter.partnerId } : {}),
+    ...(filter.excludeReservationId != null ? { id: { not: filter.excludeReservationId } } : {}),
   };
+  const where: Prisma.ReservationAllocationWhereInput = { reservation };
   if (filter.articleIds?.length) where.articleId = { in: filter.articleIds };
   if (filter.depotId) where.depotId = filter.depotId;
   const article: Prisma.ArticleWhereInput = {};
@@ -176,7 +185,13 @@ export function reservedByCell(parts: ReservedPart[]): Map<string, Prisma.Decima
   return out;
 }
 
-/** Quantite promise par article, tous depots et lots confondus. */
+/**
+ * Quantite promise par article, tous depots et lots confondus.
+ *
+ * D21 : c'est la somme du cumul d'un acteur. Appelee avec les seules parts de cet
+ * acteur (filtre `partnerId`), elle donne exactement ce que le plafond doit
+ * comparer a sa base.
+ */
 export function reservedByArticle(parts: ReservedPart[]): Map<number, Prisma.Decimal> {
   const out = new Map<number, Prisma.Decimal>();
   for (const p of parts) {
@@ -218,37 +233,46 @@ export function invalidatePlafondCache(): void {
 }
 
 export interface PlafondState {
-  /** Stock physique total de l'article (tous depots, tous lots). */
-  stockTotal: number;
-  /** Deja promis par les reservations ACTIF. */
-  dejaReserve: number;
+  /** Base du calcul : le stock libre du produit. */
+  base: number;
+  /** Ce que l'acteur a deja promis sur ce produit dans ses reservations ACTIF. */
+  cumulActuel: number;
   /** Ce que la reservation en cours de creation ajoute. */
   demande: number;
-  /** Plafond autorise, en unites (15 % du stock total par defaut). */
+  /** Plafond autorise, en unites. */
   plafond: number;
   pct: number;
-  /** Ce qui resterait disponible pour d'autres reservations apres celle-ci. */
+  /** Cumul de l'acteur apres cette reservation. */
   cumulApresDemande: number;
   depasse: boolean;
 }
 
 /**
- * Regle 1 de D20 : on ne peut pas reserver plus de 15 % de la quantite globale
- * d'un produit. Le plafond porte sur le CUMUL des reservations ACTIF, pas sur
- * chaque reservation isolement : sans cumul, cinq reservations successives
- * immobiliseraient 100 % du stock et la regle ne protegerait rien.
+ * D21 : le plafond porte sur le CUMUL des promesses d'un acteur sur un produit,
+ * plafonne a un pourcentage du STOCK LIBRE de ce produit.
+ *
+ * Il ne porte pas sur une reservation isolee : un acteur doit pouvoir repartir son
+ * quota sur plusieurs reservations, et c'est le cumul qui l'empeche d'en reprendre
+ * indefiniment. La base etant le stock libre, elle baisse a chaque promesse : un
+ * acteur qui prend tout son quota d'un coup se ferme ensuite la porte lui-meme.
+ * C'est le choix du directeur, assume ici et documente plutot que corrige en
+ * silence.
+ *
+ * Ni la base ni le cumul ne sont lus par cette fonction : l'appelant les fournit.
+ * C'est ce qui permet au meme calcul de servir la creation (plafond d'un acteur
+ * donne) et l'apercu du formulaire (meme formule, demande nulle).
  */
 export function computePlafond(input: {
-  stockTotal: Prisma.Decimal;
-  dejaReserve: Prisma.Decimal;
+  base: Prisma.Decimal;
+  cumulActuel: Prisma.Decimal;
   demande: Prisma.Decimal;
   pct: number;
 }): PlafondState {
-  const plafond = input.stockTotal.mul(input.pct).div(100);
-  const cumul = input.demande.add(input.dejaReserve);
+  const plafond = input.base.mul(input.pct).div(100);
+  const cumul = input.demande.add(input.cumulActuel);
   return {
-    stockTotal: toNumber(input.stockTotal, 3),
-    dejaReserve: toNumber(input.dejaReserve, 3),
+    base: toNumber(input.base, 3),
+    cumulActuel: toNumber(input.cumulActuel, 3),
     demande: toNumber(input.demande, 3),
     plafond: toNumber(plafond, 3),
     pct: input.pct,

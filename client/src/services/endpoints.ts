@@ -203,7 +203,15 @@ export const reservationsApi = {
     request<Reservation[]>('/reservations', { query: { ...filters } }),
   synthesis: () =>
     request<{ actives: number; expirees: number; expire7: number; realises: number }>('/reservations/synthesis'),
-  availability: (articleId: number) => request<ReservationAvailability>(`/reservations/availability/${articleId}`),
+  /**
+   * D21 : `partnerId` conditionne le plafond renvoye, qui est propre a chaque
+   * acteur. Sans lui le serveur renvoie un cumul nul, donc un plafond qui n'est le
+   * bon pour personne : l'appel doit toujours le passer.
+   */
+  availability: (articleId: number, partnerId: number) =>
+    request<ReservationAvailability>(`/reservations/availability/${articleId}`, {
+      query: { partnerId },
+    }),
   get: (id: string) => request<Reservation>(`/reservations/${id}`),
   create: (payload: {
     partnerId: number;
@@ -271,4 +279,15 @@ export const referentialApi = {
   create: (model: string, payload: { code: string; label: string; categoryId?: number | null }) =>
     request(`/referential/${model}`, { method: 'POST', body: payload }),
   remove: (model: string, id: number) => request(`/referential/${model}/${id}`, { method: 'DELETE' }),
+  /**
+   * D21 : dispense du plafond de reservation, accordee par la direction generale.
+   * Route dediee et non une mise a jour generale : le referentiel n'a pas
+   * d'ecran d'edition, et ouvrir une edition complete exposerait le nom et le
+   * statut des acteurs a un droit qui n'en a pas la charge.
+   */
+  setPlafondExempt: (id: number, plafondExempt: boolean) =>
+    request<{ id: number; name: string; plafondExempt: boolean }>(
+      `/referential/partners/${id}/plafond-exempt`,
+      { method: 'PATCH', body: { plafondExempt } },
+    ),
 };

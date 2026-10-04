@@ -8,6 +8,7 @@ import {
   cellKey,
   computePlafond,
   plafondPct,
+  reservedByArticle,
   reservedByCell,
 } from './reservationStock';
 
@@ -18,6 +19,12 @@ import {
  *
  *   1. plafond de 15 % de la quantite globale de chaque produit (cumul des
  *      reservations ACTIF) ;
+ *
+ * Point 1 remplace par D21 : le plafond porte sur le cumul des promesses d'un
+ * ACTEUR sur un produit, plafonne a 15 % du stock libre de ce produit. La regle
+ * globale disparait (deux acteurs concurrents peuvent donc chacun atteindre leur
+ * quota) et l'acteur valide par la direction generale en est dispense. Voir
+ * `computePlafond`.
  *   2. FEFO a la creation : les lots sont figes dans `reservation_allocations`,
  *      lot par lot, dans l'ordre de peremption le plus proche. AUCUN mouvement
  *      n'est ecrit — le stock physique ne bouge pas ;
@@ -67,14 +74,17 @@ export interface AvailabilityRow {
  * `lignes` = cellules de stock libre strictement positif, triees FEFO. Sert de base
  * au FEFO, au controle de disponibilite et a l'apercu affiche au directeur.
  *
- * `stockTotal` / `dejaReserve` = sommes sur TOUTES les cellules de l'article, y
- * compris les cellules saturees. Servent de base au plafond. Les calculer sur
- * `lignes` tronquerait la base et elargirait le plafond : c'est exactement F2.
+ * `stockTotal` / `dejaReserve` / `libreTotal` = sommes sur TOUTES les cellules de
+ * l'article, y compris les cellules saturees. Servent de base au plafond (D21) et
+ * aux colonnes de l'ecran Etat de stock. Les calculer sur `lignes` tronquerait la
+ * base et elargirait le plafond : c'est exactement F2.
  */
 export interface AvailabilityRows {
   lignes: AvailabilityRow[];
   stockTotal: Prisma.Decimal;
   dejaReserve: Prisma.Decimal;
+  /** Stock libre total, toutes cellules confondues : base du plafond D21. */
+  libreTotal: Prisma.Decimal;
 }
 
 function todayStart(): Date {
@@ -196,6 +206,12 @@ async function availabilityRows(
   const toutesCellules = [...map.values()];
   const stockTotal = toutesCellules.reduce((a, r) => a.add(dec(r.quantity)), new Prisma.Decimal(0));
   const dejaReserve = toutesCellules.reduce((a, r) => a.add(dec(r.reserve)), new Prisma.Decimal(0));
+  // F2 applique a la regle D21 : la base du plafond est le stock libre, et elle
+  // se calcule sur TOUTES les cellules. Une cellule de libre exactement nul
+  // contribue 0 et ne change donc rien ; une cellule negative, si elle pouvait
+  // exister, compterait au lieu de disparaitre. La somme ne doit pas dependre du
+  // filtre qui definit la base du FEFO.
+  const libreTotal = toutesCellules.reduce((a, r) => a.add(dec(r.libre)), new Prisma.Decimal(0));
 
   return {
     // Base du FEFO : cellules encore libres, dans l'ordre de peremption.
@@ -216,43 +232,82 @@ async function availabilityRows(
       }),
     stockTotal,
     dejaReserve,
+    libreTotal,
   };
 }
 
 /**
- * Disponibilite d'un article pour le formulaire : stock libre (FEFO), total
- * physique, deja promis, et surtout le RESTE du plafond de 15 % — c'est cette
- * derniere valeur qui doit plafonner le champ quantite cote client.
+ * Disponibilite d'un article pour le formulaire, pour un acteur donne.
+ *
+ * Renvoie deux choses qu'il ne faut pas confondre :
+ * - le stock libre, base du FEFO et des colonnes de l'ecran Etat de stock ;
+ * - le plafond de l'ACTEUR : son cumul deja promis sur cet article, et ce qu'il
+ *   peut encore y ajouter. C'est cette derniere valeur qui doit plafonner le champ
+ *   quantite cote client.
+ *
+ * `partnerId` absent, aucun cumul n'est imputable a un acteur et le plafond est
+ * calcule sur un cumul nul : l'appelant voit alors le plafond theorique du produit,
+ * pas celui d'un client precis.
  */
-export async function availability(articleId: number) {
-  // F2 : le plafond se calcule sur les totaux de TOUTES les cellules ; le FEFO et le
-  // stock libre affiche restent portes par les seules cellules de libre > 0.
-  const { lignes, stockTotal, dejaReserve } = await availabilityRows(articleId, prisma as unknown as Db);
+export async function availability(articleId: number, partnerId?: number) {
+  const { lignes, stockTotal, dejaReserve, libreTotal } = await availabilityRows(
+    articleId,
+    prisma as unknown as Db,
+  );
   const total = lignes.reduce((a, r) => a + r.libre, 0);
   const pct = await plafondPct();
-  const etat = computePlafond({
-    stockTotal,
-    dejaReserve,
-    demande: dec(0),
-    pct,
-  });
+  const exempt = partnerId != null ? await isPlafondExempt(partnerId) : false;
+  const cumulActeur =
+    partnerId == null
+      ? new Prisma.Decimal(0)
+      : reservedByArticle(
+          await activeAllocations({ articleIds: [articleId], partnerId }, prisma as unknown as Db),
+        ).get(articleId) ?? new Prisma.Decimal(0);
+  const etat = computePlafond({ base: libreTotal, cumulActuel: cumulActeur, demande: dec(0), pct });
   return {
     articleId,
     /** Stock libre : base du FEFO. */
     total: toNumber(dec(total), 3),
-    stockTotal: etat.stockTotal,
-    reserve: etat.dejaReserve,
+    /** Stock physique, toutes cellules confondues (F2). */
+    stockTotal: toNumber(stockTotal, 3),
+    /** Promesses ACTIF de tous les acteurs, toutes cellules confondues (F2). */
+    reserve: toNumber(dejaReserve, 3),
+    /** Acteur valide par la direction generale : le plafond ne s'applique pas. */
+    exempt,
+    /** Ce que cet acteur a deja promis sur cet article (regle D21). */
+    cumulActeur: etat.cumulActuel,
+    /** Plafond de cet acteur : pct du stock libre du produit. */
     plafond: etat.plafond,
     pctPlafond: pct,
-    /** Ce qu'il reste autorise pour cet article, plafond moins deja promis. */
-    // Les deux termes sont deja arrondis : leur difference peut reintroduire une
+    /**
+     * Ce que cet acteur peut encore ajouter sur cet article. `null` quand il est
+     * exempt : sans plafond, il n'y a pas de reste a afficher, et un `0` se lirait
+     * comme un refus alors que la saisie est libre.
+     */
+    // Plafond et cumul sont deja arrondis : leur difference peut reintroduire une
     // erreur de virgule flottante (52.849999999999994), on la referme ici.
-    plafondRestant: Math.max(0, Number((etat.plafond - etat.dejaReserve).toFixed(3))),
+    plafondRestant: exempt
+      ? null
+      : Math.max(0, Number((etat.plafond - etat.cumulActuel).toFixed(3))),
     lignes: lignes.map((r) => ({
       ...r,
       expiryDate: r.expiryDate?.toISOString().slice(0, 10) ?? null,
     })),
   };
+}
+
+/**
+ * D21 : l'acteur est-il valide par la direction generale, donc dispense du plafond
+ * cumulatif ? Cette dispense ne porte que sur la QUANTITE : le stock libre, le
+ * FEFO et le controle de disponibilite s'appliquent toujours.
+ */
+async function isPlafondExempt(partnerId: number, db: Db = prisma as unknown as Db): Promise<boolean> {
+  const row = await db.partner.findUnique({
+    where: { id: partnerId },
+    select: { plafondExempt: true },
+  });
+  if (!row) throw notFound('Acteur introuvable');
+  return row.plafondExempt;
 }
 
 function assertPeriod(startDate: Date, endDate: Date) {
@@ -287,8 +342,9 @@ async function nextRef(tx: Db, year: number): Promise<string> {
  *
  * Deux controles bloquants, dans l'ordre :
  *   - le stock libre doit couvrir la ligne demandee ;
- *   - le cumul des reservations ACTIF ne doit pas depasser le plafond (15 % du
- *     stock physique, parametre `RESERVATION_PLAFOND_PCT`).
+ *   - le CUMUL des promesses de cet acteur sur ce produit ne doit pas depasser le
+ *     plafond (15 % du stock libre, parametre `RESERVATION_PLAFOND_PCT`, regle D21).
+ *     Un acteur dispense de ce plafond par la direction generale en est exempt.
  */
 export async function createReservation(input: ReservationInput, userId: number) {
   if (!input.lines.length) throw badRequest('Ajoutez au moins un article à réserver');
@@ -301,7 +357,10 @@ export async function createReservation(input: ReservationInput, userId: number)
   if (!staffLabel) throw badRequest('Indiquez le personnel interne concerné par la réservation');
 
   const [partner, staff] = await Promise.all([
-    prisma.partner.findUnique({ where: { id: input.partnerId }, select: { id: true, isActive: true } }),
+    prisma.partner.findUnique({
+      where: { id: input.partnerId },
+      select: { id: true, isActive: true, name: true },
+    }),
     prisma.user.findFirst({
       where: {
         isActive: true,
@@ -315,6 +374,10 @@ export async function createReservation(input: ReservationInput, userId: number)
   ]);
   if (!partner) throw notFound('Acteur introuvable');
   if (!partner.isActive) throw badRequest('Cet acteur est désactivé');
+  // Nomme l'acteur dans le refus de plafond : un refus « par produit » ne disait
+  // pas a l'utilisateur de QUI il s'agissait, alors que la regle est maintenant
+  // propre a chaque acteur.
+  const partnerLabel = partner.name;
   // Un staffId explicite doit designer un utilisateur actif ; sinon le texte libre suffit.
   let staffId = staff?.id ?? null;
   if (input.staffId != null) {
@@ -352,6 +415,9 @@ export async function createReservation(input: ReservationInput, userId: number)
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(728364112)`;
 
       const pct = await plafondPct(tx);
+      // D21 : la dispense se lit UNE FOIS pour toute la reservation, avant toute
+      // ecriture, et non ligne par ligne.
+      const exempt = await isPlafondExempt(input.partnerId, tx);
       const year = input.startDate.getUTCFullYear();
       const reservation = await tx.reservation.create({
         data: {
@@ -367,10 +433,10 @@ export async function createReservation(input: ReservationInput, userId: number)
       });
 
       for (const line of lines) {
-        // F2 : le plafond porte sur les totaux de TOUTES les cellules, le controle de
+        // F2 : les totaux portent sur TOUTES les cellules, le controle de
         // disponibilite sur le sous-ensemble de libre > 0. Invertir l'ordre des deux
         // elargirait le plafond sans que la disponibilite bouge.
-        const { lignes, stockTotal, dejaReserve } = await availabilityRows(line.articleId, tx);
+        const { lignes, dejaReserve, libreTotal } = await availabilityRows(line.articleId, tx);
         const libre = lignes.reduce<Prisma.Decimal>((a, r) => a.add(dec(r.libre)), new Prisma.Decimal(0));
 
         const art = await tx.article.findUnique({
@@ -385,21 +451,32 @@ export async function createReservation(input: ReservationInput, userId: number)
           );
         }
 
-        // Regle 1 : plafond de 15 % de la quantite globale, sur le CUMUL des
-        // reservations actives. Verifie apres la disponibilite : inutile de
-        // reprocher un plafond a quelqu'un qui n'a pas assez de stock libre.
-        const etat = computePlafond({
-          stockTotal,
-          dejaReserve,
-          demande: line.quantity,
-          pct,
-        });
-        if (etat.depasse) {
-          throw badRequest(
-            `Plafond de réservation dépassé pour l'article ${art?.code ?? line.articleId} - ${art?.designation ?? ''} : ` +
-              `maximum ${etat.pct} % du stock, soit ${etat.plafond} (stock ${etat.stockTotal}, déjà réservé ${etat.dejaReserve}, demande ${etat.demande}).`,
-            { plafond: etat },
-          );
+        // D21 : plafond sur le CUMUL des promesses de CET acteur sur ce produit.
+        // Un acteur peut donc repartir son quota sur plusieurs reservations, mais
+        // pas le depasser. Verifie apres la disponibilite : inutile de reprocher un
+        // plafond a quelqu'un qui n'a pas assez de stock libre.
+        if (!exempt) {
+          const cumulActeur =
+            reservedByArticle(
+              await activeAllocations(
+                { articleIds: [line.articleId], partnerId: input.partnerId },
+                tx,
+              ),
+            ).get(line.articleId) ?? new Prisma.Decimal(0);
+          const etat = computePlafond({
+            base: libreTotal,
+            cumulActuel: cumulActeur,
+            demande: line.quantity,
+            pct,
+          });
+          if (etat.depasse) {
+            throw badRequest(
+              `Plafond de réservation dépassé pour ${partnerLabel} sur l'article ${art?.code ?? line.articleId} - ${art?.designation ?? ''} : ` +
+                `maximum ${etat.pct} % du stock libre, soit ${etat.plafond} ` +
+                `(stock libre ${etat.base}, déjà réservé par cet acteur ${etat.cumulActuel}, demande ${etat.demande}, cumul ${etat.cumulApresDemande}).`,
+              { plafond: etat },
+            );
+          }
         }
 
         const reservationLine = await tx.reservationLine.create({

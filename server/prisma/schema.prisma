@@ -223,6 +223,11 @@ model Partner {
   type     PartnerType
   isActive Boolean     @default(true) @map("is_active")
 
+  // D21 : acteur valide par la direction generale, dispense du plafond cumulatif de
+  // reservation. Ne dispense d'aucune autre regle : le stock libre et le FEFO
+  // s'appliquent toujours. Bascule reservee a l'administrateur (referential:write).
+  plafondExempt Boolean @default(false) @map("plafond_exempt")
+
   moves        Move[]
   orders       ArticleOrder[]
   loans        Loan[]

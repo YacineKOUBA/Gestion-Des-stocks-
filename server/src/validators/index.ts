@@ -5,6 +5,7 @@ import {
   RestitutionType,
 } from '@prisma/client';
 import { CURRENCY_CODES, DEFAULT_CURRENCY } from '../utils/currencies';
+import { PLAFOND_CODE } from '../services/reservationStock';
 
 export const loginSchema = z.object({
   login: z.string().min(1),
@@ -103,7 +104,63 @@ export const reservationSchema = z.object({
     .min(1),
 });
 
-export const settingsSchema = z.record(z.string().min(1), z.string().min(1));
+/**
+ * D21 : le plafond de reservation est un pourcentage, pas un texte libre.
+ *
+ * `plafondPct` se rabat silencieusement sur 15 % si la valeur n'est pas un nombre
+ * dans ]0, 100]. C'est une bonne protection contre une valeur corrompue, mais
+ * c'est aussi une Valerie de Constance : taper « 15,5 » — la virgule est naturelle
+ * en francais — produisait NaN, donc un plafond qui restait a 15 % alors que
+ * l'ecran affichait « Parametres enregistres ». Le directeur croyait avoir change
+ * la regle, et elle n'avait pas bouge.
+ *
+ * On refuse donc explicitement ce qui n'est pas un pourcentage utilisable, plutot
+ * que de l'enregistrer et de l'ignorer. La virgule est rejetee volontairement : les
+ * valeurs en base utilisent le point, et convertir introduirait deux formats
+ * cohabitant pour le meme parametre.
+ */
+const POURCENTAGE = /^\d{1,3}(\.\d{1,4})?$/;
+
+/**
+ * Message d'explication si la valeur n'est pas un pourcentage utilisable, `null`
+ * sinon.
+ *
+ * Ce controle est appele par la route AVANT le schema, parce que le gestionnaire
+ * d'erreurs ne remonte a l'ecran que « Donnees invalides » : un refus sans motif
+ * serait precisement le piege qu'on cherche a eviter, l'utilisateur ne saurait pas
+ * quel champ est en cause ni ce qu'il attendait.
+ */
+export function checkPlafondPct(value: unknown): string | null {
+  if (value === undefined) return null;
+  if (typeof value !== 'string') {
+    return 'Le plafond doit être un pourcentage, par exemple 15 ou 12.5.';
+  }
+  const brut = value.trim();
+  if (!POURCENTAGE.test(brut)) {
+    return (
+      'Le plafond doit être un pourcentage, par exemple 15 ou 12.5 (point décimal, ' +
+      'la virgule est refusée : elle rendrait le réglage sans effet).'
+    );
+  }
+  const n = Number(brut);
+  if (n <= 0 || n > 100) return 'Le plafond doit être compris entre 0 (exclu) et 100.';
+  return null;
+}
+
+export const settingsSchema = z
+  .record(z.string().min(1), z.string().min(1))
+  .superRefine((data, ctx) => {
+    if (!(PLAFOND_CODE in data)) return;
+    const message = checkPlafondPct(data[PLAFOND_CODE]);
+    if (message) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: [PLAFOND_CODE], message });
+    }
+  });
+
+/** D21 : dispense du plafond, accordee par la direction generale. */
+export const plafondExemptSchema = z.object({
+  plafondExempt: z.boolean(),
+});
 
 export const lotSchema = z.object({
   articleId: z.number().int().positive(),

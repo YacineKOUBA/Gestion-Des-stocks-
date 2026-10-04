@@ -105,6 +105,8 @@ export interface Partner {
   name: string;
   type: PartnerType;
   isActive: boolean;
+  /** D21 : dispense du plafond cumulatif de reservation. */
+  plafondExempt: boolean;
 }
 
 export interface Article {
@@ -403,17 +405,24 @@ export interface Reservation {
 
 export interface ReservationAvailability {
   articleId: number;
-  /** Stock libre total : base du FEFO et plafond du champ quantite. */
+  /** Stock libre total : base du FEFO et de la regle D21 (base du plafond). */
   total: number;
-  /** Stock physique total de l'article. */
+  /** Stock physique total de l'article (F2 : toutes cellules confondues). */
   stockTotal: number;
-  /** Quantite deja promise par les reservations ACTIF. */
+  /** Quantite deja promise par TOUS les acteurs (F2 : toutes cellules). */
   reserve: number;
-  /** Plafond de reservation : pctPlafond % du stock physique. */
+  /** D21 : acteur valide par la direction generale, dispense du plafond. */
+  exempt: boolean;
+  /** D21 : ce que cet acteur a deja promis sur cet article. */
+  cumulActeur: number;
+  /** D21 : plafond de cet acteur = pctPlafond % du stock libre du produit. */
   plafond: number;
   pctPlafond: number;
-  /** Ce qu'il reste autorise pour cet article (plafond moins deja reserve). */
-  plafondRestant: number;
+  /**
+   * D21 : ce que cet acteur peut encore ajouter sur cet article. `null` quand il
+   * est exempt : sans plafond, un `0` se lirait comme un refus.
+   */
+  plafondRestant: number | null;
   lignes: {
     lotId: number | null;
     lotNumber: string | null;

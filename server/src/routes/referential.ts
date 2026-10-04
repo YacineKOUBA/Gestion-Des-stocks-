@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { prisma } from '../prisma';
 import { parse } from '../utils/parse';
 import { referentialSchema } from '../validators/article';
+import { plafondExemptSchema } from '../validators';
 import { audit } from '../utils/audit';
 import { requirePermission } from '../middlewares/permissions';
 import { notFound, badRequest, conflict } from '../utils/apiError';
@@ -104,6 +105,52 @@ async function deleteRef(model: ReferenceModel, id: number) {
       return prisma.partner.delete({ where: { id } });
   }
 }
+
+/**
+ * D21 : dispense du plafond cumulatif de reservation.
+ *
+ * Cette route est volontairement la SEULE voie d'ecriture d'un acteur existant, et
+ * elle n'accepte QU'un seul champ. Le referentiel ne dispose pas d'ecran
+ * d'edition (le formulaire ne fait que creer) : ajouter une mise a jour generale
+ * aurait ouvert la modification du nom, du type et du statut actif a un profil qui
+ * n'en a pas la charge, et n'aurait rien ajoute au besoin reels.
+ *
+ * Le droit est `referential:write`, deja reserve a l'administrateur : la decision
+ * « valide par la direction generale, appliquee par l'administrateur » ne demande
+ * donc aucun droit nouveau.
+ */
+router.patch(
+  '/partners/:id/plafond-exempt',
+  requirePermission('referential:write'),
+  async (req, res) => {
+    const data = parse(plafondExemptSchema, req.body);
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      throw badRequest('Identifiant invalide');
+    }
+    const before = await prisma.partner.findUnique({
+      where: { id },
+      select: { id: true, name: true, plafondExempt: true },
+    });
+    if (!before) throw notFound('Acteur introuvable');
+
+    const updated = await prisma.partner.update({
+      where: { id },
+      data: { plafondExempt: data.plafondExempt },
+      select: { id: true, name: true, plafondExempt: true },
+    });
+    // L'avant/apres est trace : cette dispense est une derogation a une regle de
+    // gestion, c'est donc la kind d'information qu'on doit pouvoir relire six mois
+    // plus tard dans le journal.
+    await audit(req.user!.id, 'MODIFICATION', 'ref_partner', String(id), {
+      champ: 'plafondExempt',
+      avant: before.plafondExempt,
+      apres: updated.plafondExempt,
+      acteur: updated.name,
+    });
+    res.json(updated);
+  },
+);
 
 router.delete('/:model/:id', requirePermission('referential:write'), async (req, res) => {
   const model = req.params.model as ReferenceModel;

@@ -13,6 +13,8 @@ interface RefItem {
   name?: string;
   categoryId?: number | null;
   category?: { id: number; code: string; label: string } | null;
+  /** D21 : dispense du plafond cumulatif de reservation. */
+  plafondExempt?: boolean;
 }
 
 interface TabConfig {
@@ -64,11 +66,61 @@ export function ReferentialPage() {
     }
   }
 
+  /**
+   * D21 : bascule de la dispense du plafond. Le referentiel n'a pas d'ecran
+   * d'edition, cette case est donc le seul point de reglage — d'ou une route dediee
+   * cote serveur plutot qu'une mise a jour generale de l'acteur.
+   */
+  async function handleToggleExempt(r: RefItem, valeur: boolean) {
+    const label = r.name ?? `#${r.id}`;
+    if (
+      !window.confirm(
+        valeur
+          ? `Dispenser « ${label} » du plafond de réservation ?\n\nCette dérogation est validée par la direction générale et sera tracée dans le journal d'audit.`
+          : `Réappliquer le plafond de réservation à « ${label} » ?`,
+      )
+    ) {
+      return;
+    }
+    try {
+      await referentialApi.setPlafondExempt(r.id, valeur);
+      setVersion((v) => v + 1);
+    } catch (err) {
+      window.alert(errorMessage(err, 'Modification impossible'));
+    }
+  }
+
   const columns: Column<RefItem>[] = [
     { key: 'code', header: 'Code', render: (r) => r.code ?? '—' },
     { key: 'label', header: 'Libellé', render: (r) => r.label ?? r.name ?? '—' },
     ...(active.categoryColumn
       ? [{ key: 'category', header: 'Catégorie', render: (r) => r.category?.label ?? '—' } as Column<RefItem>]
+      : []),
+    // D21 : la case est lue sans restriction (elle decrit la regle en vigueur) mais
+    // ne se coche qu'avec `referential:write`, deja reserve a l'administrateur :
+    // c'est lui qui applique la validation de la direction generale.
+    ...(active.key === 'partners'
+      ? [
+          {
+            key: 'plafondExempt',
+            header: 'Exempté du plafond',
+            render: (r: RefItem) =>
+              can('referential:write') ? (
+                <label title="Acteur validé par la direction générale">
+                  <input
+                    type="checkbox"
+                    checked={r.plafondExempt ?? false}
+                    onChange={(e) => handleToggleExempt(r, e.target.checked)}
+                  />{' '}
+                  {r.plafondExempt ? 'Exempté' : 'Plafonné'}
+                </label>
+              ) : r.plafondExempt ? (
+                'Exempté'
+              ) : (
+                'Plafonné'
+              ),
+          } as Column<RefItem>,
+        ]
       : []),
     ...(active.model && can('referential:write')
       ? [

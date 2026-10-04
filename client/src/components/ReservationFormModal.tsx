@@ -54,11 +54,18 @@ export function ReservationFormModal({ onClose, onSaved }: { onClose: () => void
     () => [...new Set(lines.map((l) => Number(l.articleId)).filter((n) => n > 0))],
     [lines],
   );
+  // D21 : le plafond renvoye appartient a l'acteur choisi, l'apercu doit donc etre
+  // recharge a chaque changement d'acteur. Tant qu'aucun acteur n'est choisi on ne
+  // appelle rien : sans acteur, le serveur renverrait un cumul nul, donc un plafond
+  // qui n'appartient a personne et qui laisserait croire que la saisie est libre.
+  const partnerNumber = Number(partnerId);
+  const selectedPartner = partners.data?.find((p) => p.id === partnerNumber);
   useEffect(() => {
+    if (!Number.isInteger(partnerNumber) || partnerNumber <= 0) return;
     let annule = false;
     for (const id of articleIds) {
       reservationsApi
-        .availability(id)
+        .availability(id, partnerNumber)
         .then((r) => {
           if (!annule) setDispo((prev) => ({ ...prev, [id]: r }));
         })
@@ -66,7 +73,7 @@ export function ReservationFormModal({ onClose, onSaved }: { onClose: () => void
           // Repli : la disponibilite reelle est inconnue. On fige un profil a zero,
           // ce qui ferme la ligne cote client (l'utilisateur voit « 0 en stock libre »)
           // plutot que de laisser creer une reservation que le serveur refusera.
-          // Les 5 champs du plafond D20 sont donc necessaires ici : sans eux, le
+          // Les champs du plafond D21 sont donc necessaires ici : sans eux, le
           // controle `demande > dispoArticle` liserait `undefined`.
           if (!annule)
             setDispo((prev) => ({
@@ -76,6 +83,8 @@ export function ReservationFormModal({ onClose, onSaved }: { onClose: () => void
                 total: 0,
                 stockTotal: 0,
                 reserve: 0,
+                exempt: false,
+                cumulActeur: 0,
                 plafond: 0,
                 pctPlafond: 15,
                 plafondRestant: 0,
@@ -87,7 +96,7 @@ export function ReservationFormModal({ onClose, onSaved }: { onClose: () => void
     return () => {
       annule = true;
     };
-  }, [articleIds]);
+  }, [articleIds, partnerNumber]);
 
   function updateLine(index: number, patch: Partial<LineDraft>) {
     setLines((prev) => prev.map((l, i) => (i === index ? { ...l, ...patch } : l)));
@@ -138,21 +147,25 @@ export function ReservationFormModal({ onClose, onSaved }: { onClose: () => void
       const art = articles.data?.find((a) => a.id === Number(l.articleId));
       const info = dispo[Number(l.articleId)];
       const libreArticle = info?.total ?? 0;
-      // Le serveur plafonne le CUMUL des reservations ACTIF a pctPlafond % du stock
-      // physique. Une ligne seule peut donc depasser ce qu'il reste autorise meme
-      // si le stock libre suffit : on compare le cumul par article.
+      // D21 : le serveur plafonne le CUMUL des promesses de cet acteur a
+      // pctPlafond % du stock libre. `plafondRestant` tient deja compte de ce qu'il
+      // a deja promis, et il est `null` pour un acteur exempt : la seule limite est
+      // alors le stock libre.
+      const plafondRestant = info?.plafondRestant ?? null;
+      const dispoArticle = Math.min(libreArticle, plafondRestant ?? libreArticle);
+      // Une meme reservation peut porter plusieurs lignes sur le meme article : on
+      // les cumule avant de comparer, sinon chacune paraitrait prise isolement.
       const demande = valides
         .filter((x) => Number(x.articleId) === Number(l.articleId))
         .reduce((a, x) => a + Number(x.quantity), 0);
-      const dispoArticle = Math.min(libreArticle, info?.plafondRestant ?? libreArticle);
       if (demande > dispoArticle) {
-        const plafondLimite = (info?.plafondRestant ?? libreArticle) < libreArticle;
+        const plafondLimite = plafondRestant != null && plafondRestant < libreArticle;
         setError(
           plafondLimite ? (
             <>
               {`Plafond de réservation atteint pour ${art?.code ?? ''} : `}
-              <Qty value={info?.plafondRestant ?? 0} />
-              {` encore mobilisables (${info?.pctPlafond ?? 15} % du stock). Réduisez la quantité.`}
+              <Qty value={plafondRestant} />
+              {` encore mobilisables pour cet acteur (${info?.pctPlafond ?? 15} % du stock libre). Réduisez la quantité.`}
             </>
           ) : (
             <>
@@ -210,15 +223,36 @@ export function ReservationFormModal({ onClose, onSaved }: { onClose: () => void
         </Field>
 
         <Field label="Acteur">
-          <select value={partnerId} onChange={(e) => setPartnerId(e.target.value)} required>
+          <select
+            value={partnerId}
+            onChange={(e) => {
+              // D21 : le plafond depends de l'acteur. On jette l'apercu precedent
+              // ici, a la source, plutot que dans l'effet de chargement : sans cela
+              // l'ecran afficherait une fraction de seconde un plafond qui n'est
+              // plus celui du nouvel acteur choisi.
+              setDispo({});
+              setPartnerId(e.target.value);
+            }}
+            required
+          >
             <option value="">—</option>
             {partners.data?.filter((p) => p.isActive).map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
+                {p.plafondExempt ? ' (exempté du plafond)' : ''}
               </option>
             ))}
           </select>
         </Field>
+
+        {/* D21 : la dispense est une derogation a une regle de gestion. Elle doit
+            etre visible au moment ou l'on saisit, sinon l'utilisateur ne comprend
+            pas pourquoi le plafond ne s'applique pas. */}
+        {selectedPartner?.plafondExempt ? (
+          <div className="alert alert-warning">
+            {`${selectedPartner.name} est validé par la direction générale : le plafond de réservation ne s'applique pas. Le stock libre et le FEFO restent respectés.`}
+          </div>
+        ) : null}
 
         <Field label="Début de la réservation">
           <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} required />
@@ -247,9 +281,10 @@ export function ReservationFormModal({ onClose, onSaved }: { onClose: () => void
           const art = articles.data?.find((a) => a.id === Number(line.articleId));
           const info = line.articleId ? dispo[Number(line.articleId)] : undefined;
           const libreArticle = info?.total ?? 0;
-          const plafondRestant = info?.plafondRestant ?? 0;
-          const plafondLimite = plafondRestant < libreArticle;
-          const maxLigne = Math.min(libreArticle, plafondRestant);
+          // `null` = acteur exempt : aucune limite de quantite a afficher, le seul
+          // plafond restant est le stock libre. Un `0` se lirait comme un refus.
+          const plafondRestant = info?.plafondRestant ?? null;
+          const maxLigne = Math.min(libreArticle, plafondRestant ?? libreArticle);
           const qte = Number(line.quantity) || 0;
           const trop = qte > maxLigne;
           return (
@@ -276,11 +311,19 @@ export function ReservationFormModal({ onClose, onSaved }: { onClose: () => void
                 {art?.unit?.code ? `${art.unit.code} · ` : ''}
                 libre <Qty value={libreArticle} />
                 {line.articleId ? (
-                  <>
-                    {' · plafond restant '}
-                    <Qty value={plafondRestant} />
-                    {` (${info?.pctPlafond ?? 15} %)`}
-                  </>
+                  !partnerNumber ? (
+                    ' · choisissez l’acteur pour connaître son plafond'
+                  ) : info?.exempt ? (
+                    ' · acteur exempté du plafond'
+                  ) : (
+                    <>
+                      {' · plafond restant '}
+                      <Qty value={plafondRestant ?? 0} />
+                      {` (${info?.pctPlafond ?? 15} % du stock libre`}
+                      {info && info.cumulActeur > 0 ? `, déjà ${info.cumulActeur} promis` : ''}
+                      {')'}
+                    </>
+                  )
                 ) : null}
               </span>
               {lines.length > 1 ? (
@@ -292,10 +335,10 @@ export function ReservationFormModal({ onClose, onSaved }: { onClose: () => void
                   ×
                 </button>
               ) : null}
-              {trop && plafondLimite ? (
+              {trop && plafondRestant != null && plafondRestant < libreArticle ? (
                 <span className="muted">
-                  Le plafond de {info?.pctPlafond ?? 15} % est atteint pour cet article : la quantité
-                  demandée dépasse ce qu'il reste autorisé.
+                  Le plafond de {info?.pctPlafond ?? 15} % est atteint pour cet acteur sur cet
+                  article : la quantité demandée dépasse ce qu'il reste autorisé.
                 </span>
               ) : null}
               {qte > 0 && !trop && maxLigne > 0 ? (
