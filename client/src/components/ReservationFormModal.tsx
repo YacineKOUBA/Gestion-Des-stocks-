@@ -63,7 +63,25 @@ export function ReservationFormModal({ onClose, onSaved }: { onClose: () => void
           if (!annule) setDispo((prev) => ({ ...prev, [id]: r }));
         })
         .catch(() => {
-          if (!annule) setDispo((prev) => ({ ...prev, [id]: { articleId: id, total: 0, lignes: [] } }));
+          // Repli : la disponibilite reelle est inconnue. On fige un profil a zero,
+          // ce qui ferme la ligne cote client (l'utilisateur voit « 0 en stock libre »)
+          // plutot que de laisser creer une reservation que le serveur refusera.
+          // Les 5 champs du plafond D20 sont donc necessaires ici : sans eux, le
+          // controle `demande > dispoArticle` liserait `undefined`.
+          if (!annule)
+            setDispo((prev) => ({
+              ...prev,
+              [id]: {
+                articleId: id,
+                total: 0,
+                stockTotal: 0,
+                reserve: 0,
+                plafond: 0,
+                pctPlafond: 15,
+                plafondRestant: 0,
+                lignes: [],
+              },
+            }));
         });
     }
     return () => {

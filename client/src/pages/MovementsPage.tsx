@@ -77,6 +77,15 @@ export function MovementsPage() {
   const [pending, setPending] = useState<BonDraft[]>([]);
   const [draftIndex, setDraftIndex] = useState(0);
   const [bonInitial, setBonInitial] = useState<BonFormInitial | null>(null);
+  // D20 : reactiver un mouvement annule retire de nouveau du stock. Si cela mord dans
+  // une reservation ACTIF, le serveur refuse (409) et renvoie un jeton signe : on
+  // affiche le meme dialogue que pour une creation, puis on rejoue la reactivation.
+  // Le mouvement vise est memorise avec le conflit : le dialogue doit pouvoir le nommer.
+  const [reactivateOverlap, setReactivateOverlap] = useState<{
+    move: Movement;
+    conflict: ReservationOverlapConfirmation;
+  } | null>(null);
+  const [reactivateBusy, setReactivateBusy] = useState(false);
 
   function advanceDraft() {
     const next = draftIndex + 1;
@@ -126,18 +135,30 @@ export function MovementsPage() {
     }
   }
 
-  async function handleReactivate(move: Movement) {
+  async function handleReactivate(move: Movement, confirmToken?: string | null) {
+    // Premier essai : on demande la confirmation classique. Rejeu apres accord
+    // d'empietement : le dialogue D20 a deja fait office de confirmation.
     if (
+      confirmToken == null &&
       !window.confirm(
         `Réactiver le mouvement ${move.id} (${move.type?.code ?? ''}) ? Le stock disponible sera recalculé.`,
       )
     )
       return;
     try {
-      await movementsApi.reactivate(move.id);
+      await movementsApi.reactivate(move.id, confirmToken ?? null);
+      setReactivateOverlap(null);
+      setSuccess(`Mouvement ${move.id} réactivé.`);
       movements.reload();
     } catch (err) {
-      window.alert(errorMessage(err, 'Réactivation impossible'));
+      const conflict = overlapConfirmation(err);
+      if (conflict) {
+        setReactivateOverlap({ move, conflict });
+      } else {
+        window.alert(errorMessage(err, 'Réactivation impossible'));
+      }
+    } finally {
+      setReactivateBusy(false);
     }
   }
 
@@ -348,6 +369,21 @@ export function MovementsPage() {
           onSaved={() => {
             setBonInitial(null);
             advanceDraft();
+          }}
+        />
+      ) : null}
+
+      {/* D20 : rejouer la reactivation avec le jeton signe si l'utilisateur accepte
+          que la promesse soit amputee. */}
+      {reactivateOverlap ? (
+        <OverlapConfirm
+          conflict={reactivateOverlap.conflict}
+          context={`Réactivation du mouvement ${reactivateOverlap.move.id} : cette opération retire du stock.`}
+          busy={reactivateBusy}
+          onCancel={() => setReactivateOverlap(null)}
+          onConfirm={() => {
+            setReactivateBusy(true);
+            void handleReactivate(reactivateOverlap.move, reactivateOverlap.conflict.confirmToken);
           }}
         />
       ) : null}

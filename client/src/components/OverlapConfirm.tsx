@@ -11,17 +11,25 @@ import type { ReservationOverlapConfirmation } from '../types';
  */
 export function OverlapConfirm({
   conflict,
+  context,
   busy,
   onCancel,
   onConfirm,
 }: {
   conflict: ReservationOverlapConfirmation;
+  /**
+   * Origine de l'operation affichee au-dessus du message. Facultif : sert a rappeler
+   * au directeur CE QUI va amputer la reservation (creer un mouvement, reactiver un
+   * mouvement annule, cloturer un inventaire...), car la formule reste identique.
+   */
+  context?: string;
   busy?: boolean;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
   return (
     <Modal title="Lot réservé touché" onClose={onCancel}>
+      {context ? <p className="muted">{context}</p> : null}
       <p>{conflict.message}</p>
 
       <div className="detail-summary">

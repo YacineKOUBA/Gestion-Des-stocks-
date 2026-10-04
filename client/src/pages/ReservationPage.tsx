@@ -52,8 +52,18 @@ export function ReservationPage() {
       // D20 : la validation transforme la promesse en SORTIES reelles. Une note
       // signale les lots amputes avant validation, et la validation est refusee
       // (400) si le stock ne couvre plus la promesse.
-      const updated = action === 'valider' ? await reservationsApi.validate(id) : await reservationsApi.cancel(id);
-      if (action === 'valider' && 'notes' in updated && updated.notes?.length) setNotes(updated.notes);
+      // Les deux appels sont separes : `validate` renvoie des notes, `cancel` non,
+      // et un ternaire sur un appel et une union rendait `notes` illisible.
+      let updated: Reservation;
+      let notesValidation: string[] | undefined;
+      if (action === 'valider') {
+        const r = await reservationsApi.validate(id);
+        updated = r;
+        notesValidation = r.notes;
+      } else {
+        updated = await reservationsApi.cancel(id);
+      }
+      if (notesValidation?.length) setNotes(notesValidation);
       setDetail((prev) => (prev && prev.id === updated.id ? updated : prev));
       reservations.reload();
       synthese.reload();

@@ -9,6 +9,7 @@ import {
   detectOverlap,
   issueOverlapToken,
   overlapTokenPayload,
+  type Amputation,
 } from './reservationOverlap';
 
 export interface MoveInput {
@@ -173,9 +174,17 @@ async function assertRetourCoherent(input: MoveInput, db: Db) {
  * `overlap` unites sur les promesses concernees, ce qui laisse la promesse
  * restante egale au stock restant.
  *
+ * D20, decision 4 : c'est aussi la porte de `reactivateMovement`. Reactiver un
+ * mouvement annule le remet dans le calcul du stock, donc en retire a nouveau.
+ * Sans ce controle, une promesse ACTIF pouvait etre amputee sans confirmation et
+ * l'ecran Etat de stock affichait « deja reserve » au-dela de 100 %.
+ *
  * Le controle est volontairement place APRES les tests de disponibilite : inutile
  * de demander a l'utilisateur d'accepter une amputation sur une operation qui de
  * toute facon echouerait.
+ *
+ * Renvoie les amputations reellement consenties (liste vide si l'ecriture est
+ * libre) : l'appelant les joint a sa propre trace d'audit.
  */
 async function assertNoReservedOverlap(
   input: MoveInput,
@@ -183,8 +192,8 @@ async function assertNoReservedOverlap(
   stockCellule: Prisma.Decimal | null,
   userId: number,
   db: Db,
-) {
-  if (sens >= 0 || stockCellule === null) return;
+): Promise<Amputation[]> {
+  if (sens >= 0 || stockCellule === null) return [];
 
   const cell = {
     articleId: input.articleId,
@@ -197,7 +206,7 @@ async function assertNoReservedOverlap(
     { cell, stockCellule, quantite: dec(input.quantity), operation: input.type },
     db,
   );
-  if (!conflit) return;
+  if (!conflit) return [];
 
   const payload = overlapTokenPayload(conflit, userId);
   if (!verifyConfirmToken(input.confirmToken, payload)) {
@@ -229,6 +238,8 @@ async function assertNoReservedOverlap(
     reservations: conflit.reservations,
     amputations,
   });
+
+  return amputations;
 }
 
 async function createMovementTx(input: MoveInput, userId: number, db: Db) {
@@ -389,8 +400,27 @@ export async function cancelMovement(moveId: bigint, userId: number) {
  * modifie le stock disponible : on re-valide donc la disponibilite du stock
  * (hors mouvement reactivé) pour les mouvements qui diminuent le stock,
  * et un TRANSFERT reactive aussi sa moitié liée (entree/sortie).
+ *
+ * D20, decision 4 : la reactivation retire a nouveau du stock, elle repasse donc
+ * par le point de controle d'empietement des reservations ACTIF, exactement comme
+ * la creation (meme formule `X + Z − Y`, meme refus 409, meme jeton signe, meme
+ * trace). Deux corrections en decoulent :
+ *   - le controle porte sur la moitie RETIRANTE du couple. Un TRANSFERT est deux
+ *     lignes liees (SORTIE source + ENTREE destination) et la demande porte sur
+ *     l'une ou l'autre : reactiver via la moitie ENTREE reactivait silencieusement
+ *     la SORTIE, sans meme revalider la disponibilite ;
+ *   - un accord utilisateur preleve l'overlap sur les promesses concernees ; ces
+ *     amputations sont jointes a la trace de reactivation.
+ *
+ * Le mouvement a reactiver est encore ANNULE, donc deja exclu du stock : la
+ * re-validation mesure donc l'etat courant, comme si la sortie n'avait jamais eu
+ * lieu.
  */
-export async function reactivateMovement(moveId: bigint, userId: number) {
+export async function reactivateMovement(
+  moveId: bigint,
+  userId: number,
+  confirmToken?: string | null,
+) {
   const move = await prisma.move.findUnique({
     where: { id: moveId },
     include: { type: true },
@@ -398,37 +428,59 @@ export async function reactivateMovement(moveId: bigint, userId: number) {
   if (!move) throw notFound('Mouvement introuvable');
   if (move.status !== 'ANNULE') throw badRequest('Mouvement déjà actif');
 
-  const pairId =
+  const paire =
     move.type.code === MoveTypeCode.TRANSFERT
-      ? (
-          await prisma.move.findFirst({
-            where: { linkMoveId: moveId },
-            select: { id: true, status: true },
-          })
-        )?.id ?? null
+      ? await prisma.move.findFirst({
+          where: { linkMoveId: moveId },
+          include: { type: true },
+        })
       : null;
+
+  // Moitie qui retire reellement du stock. Pour un TRANSFERT c'est toujours la
+  // SORTIE, que la demande porte sur l'une ou l'autre des deux lignes.
+  const retirant = [move, paire].find((m) => m != null && m.sens < 0) ?? null;
+
+  let amputations: Amputation[] = [];
 
   const updated = await prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "articles" WHERE id = ${move.articleId} FOR UPDATE`;
 
-    // Re-validation de disponibilite : stock ACTUEL hors mouvement(s) réactive(s).
-    if (move.sens < 0) {
-      const excludeIds = pairId != null ? [move.id, pairId] : [move.id];
-      const stock = await availableStockDeci(
+    // Re-validation de disponibilite ET controle d'empietement D20 : stock ACTUEL
+    // hors mouvement(s) réactive(s).
+    if (retirant) {
+      const excludeIds = paire ? [move.id, paire.id] : [move.id];
+      const stockCellule = await availableStockDeci(
         {
-          articleId: move.articleId,
-          lotId: move.lotId,
-          depotId: move.depotId,
-          locationId: move.locationId,
+          articleId: retirant.articleId,
+          lotId: retirant.lotId,
+          depotId: retirant.depotId,
+          locationId: retirant.locationId,
           excludeIds,
         },
         tx,
       );
-      if (stock.lessThan(dec(move.quantity))) {
+      if (stockCellule.lessThan(dec(retirant.quantity))) {
         throw badRequest(
-          `Stock insuffisant pour réactiver ce mouvement (disponible : ${toNumber(stock)})`,
+          `Stock insuffisant pour réactiver ce mouvement (disponible : ${toNumber(stockCellule)})`,
         );
       }
+
+      amputations = await assertNoReservedOverlap(
+        {
+          type: retirant.type.code,
+          articleId: retirant.articleId,
+          quantity: toNumber(retirant.quantity),
+          movementDate: retirant.movementDate,
+          depotId: retirant.depotId,
+          locationId: retirant.locationId,
+          lotId: retirant.lotId,
+          confirmToken: confirmToken ?? null,
+        },
+        retirant.sens,
+        stockCellule,
+        userId,
+        tx,
+      );
     }
 
     const updatedMove = await tx.move.update({
@@ -436,9 +488,9 @@ export async function reactivateMovement(moveId: bigint, userId: number) {
       data: { status: 'ACTIF', canceledBy: null, canceledAt: null },
     });
 
-    if (pairId != null) {
+    if (paire) {
       await tx.move.updateMany({
-        where: { id: pairId, status: 'ANNULE' },
+        where: { id: paire.id, status: 'ANNULE' },
         data: { status: 'ACTIF', canceledBy: null, canceledAt: null },
       });
     }
@@ -450,6 +502,7 @@ export async function reactivateMovement(moveId: bigint, userId: number) {
     type: move.type.code,
     articleId: move.articleId,
     quantity: move.quantity,
+    ...(amputations.length ? { amputations } : {}),
   });
   return updated;
 }

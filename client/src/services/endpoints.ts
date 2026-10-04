@@ -142,7 +142,11 @@ export const movementsApi = {
     requestPaged<Movement>('/movements', { query: { ...filters } }),
   create: (payload: MovementPayload) => request<Movement | { sortie: Movement; entree: Movement }>('/movements', { method: 'POST', body: payload }),
   cancel: (id: string) => request<Movement>(`/movements/${id}/cancel`, { method: 'PATCH' }),
-  reactivate: (id: string) => request<Movement>(`/movements/${id}/reactivate`, { method: 'PATCH' }),
+  // D20 : reactiver un mouvement qui retire du stock peut mordre dans une reservation.
+  // Le serveur refuse (409) et renvoie un jeton signe ; on le rejoue avec l'identite
+  // du mouvement si l'utilisateur a accepte l'amputation.
+  reactivate: (id: string, confirmToken?: string | null) =>
+    request<Movement>(`/movements/${id}/reactivate`, { method: 'PATCH', body: { confirmToken: confirmToken ?? null } }),
   remove: (id: string) => request<Movement>(`/movements/${id}`, { method: 'DELETE' }),
 };
 

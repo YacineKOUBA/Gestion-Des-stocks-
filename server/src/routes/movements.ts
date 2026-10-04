@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { prisma } from '../prisma';
 import { createMovement, cancelMovement, reactivateMovement, deleteMovement } from '../services/movementService';
 import { parse, toBigInt } from '../utils/parse';
-import { movementSchema } from '../validators/movement';
+import { movementSchema, reactivateSchema } from '../validators/movement';
 import { requirePermission } from '../middlewares/permissions';
 
 const router = Router();
@@ -67,7 +67,11 @@ router.patch('/:id/cancel', requirePermission('movement:revise'), async (req, re
 
 router.patch('/:id/reactivate', requirePermission('movement:revise'), async (req, res) => {
   const id = toBigInt(req.params.id);
-  res.json(await reactivateMovement(id, req.user!.id));
+  // D20 : reactiver un mouvement SORTIE retire a nouveau du stock, l'operation est
+  // donc soumise au meme controle d'empietement que la creation. Le client renvoie
+  // le jeton signe si l'utilisateur a accepte l'amputation des reservations.
+  const data = parse(reactivateSchema, req.body ?? {});
+  res.json(await reactivateMovement(id, req.user!.id, data.confirmToken ?? null));
 });
 
 // Suppression complete d'un mouvement ANNULÉ du journal des E/S (tracée dans l'audit).

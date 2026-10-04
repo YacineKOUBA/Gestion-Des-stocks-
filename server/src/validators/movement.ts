@@ -30,3 +30,12 @@ export const movementSchema = z
 export const cancelSchema = z.object({
   id: z.bigint(),
 });
+
+/**
+ * D20, decision 7 : la reactivation d'un mouvement qui retire du stock repasse par le
+ * meme controle d'empietement que la creation, donc par le meme jeton signe. Absent
+ * ou invalide => la reactivation est refusee (409) avec le detail du conflit.
+ */
+export const reactivateSchema = z.object({
+  confirmToken: z.string().max(4000).nullish(),
+});
