@@ -234,22 +234,34 @@ async function assertNoReservedOverlap(
 
   // Accord explicite : on preleve l'overlap sur les promesses concernees.
   const amputations = await consumeOverlap(dec(conflit.overlap), cell, db);
-  await audit(userId, 'VALIDATION', 'reservation_allocation', String(conflit.articleId), {
-    motif: 'EMPIETEMENT_RESERVATION_CONFIRME',
-    operation: input.type,
-    articleId: conflit.articleId,
-    lot: conflit.lotNumber,
-    lotId: conflit.lotId,
-    depotId: conflit.depotId,
-    locationId: conflit.locationId,
-    Y_stockDuLot: conflit.stockCellule,
-    X_reserve: conflit.reserve,
-    Z_aSortir: conflit.quantite,
-    overlap: conflit.overlap,
-    formule: 'overlap = X + Z − Y',
-    reservations: conflit.reservations,
-    amputations,
-  });
+
+  // m1 : la trace doit porter l'IDENTifiant de ce qu'elle decrit. Une confirmation
+  // peut amputer plusieurs parties a la fois — une cellule porte les promesses de
+  // plusieurs reservations — et une trace par partie est donc la seule qui ne
+  // mente pas : `entity_id` devient enfin un `reservation_allocation.id`, et non plus
+  // l'`articleId`, qui ne designait aucune ligne de la table. Le contexte du conflit
+  // (Y, X, Z, overlap, formule, operation) est repris sur chaque trace pour qu'elle
+  // reste lisible isolement, avec la part reellement prelevee et sa reservation.
+  for (const a of amputations) {
+    await audit(userId, 'VALIDATION', 'reservation_allocation', a.allocationId, {
+      motif: 'EMPIETEMENT_RESERVATION_CONFIRME',
+      operation: input.type,
+      articleId: conflit.articleId,
+      lot: conflit.lotNumber,
+      lotId: conflit.lotId,
+      depotId: conflit.depotId,
+      locationId: conflit.locationId,
+      Y_stockDuLot: conflit.stockCellule,
+      X_reserve: conflit.reserve,
+      Z_aSortir: conflit.quantite,
+      overlap: conflit.overlap,
+      formule: 'overlap = X + Z − Y',
+      reservationId: a.reservationId,
+      reservationRef: a.reservationRef,
+      quantitePrelevee: a.quantite,
+      ...(input.geste ? { geste: input.geste } : {}),
+    });
+  }
 
   return amputations;
 }
@@ -446,6 +458,31 @@ export async function cancelMovement(
         },
         tx,
       );
+
+      // La disponibilite d'ABORD, comme dans `createMovementTx` : une annulation ne
+      // peut pas rendre une cellule negative. Ce controle ne se confond pas avec
+      // l'empietement D20 — celui-la dit « tu prends sur une promesse », celui-ci dit
+      // « il n'y a plus de marchandise » — et il ne se contourne pas par une
+      // confirmation. La difference est de nature : le manque d'une SORTIE est toujours
+      // borne par une promesse reelle que l'amputation rend honnete ; ici il n'y a
+      // rien a amputer, et confirmer consignerait un stock negatif que ni l'ecran Etat
+      // de stock ni la valorisation ne savent representer. Le refus est donc sans issue.
+      //
+      // Le calcul est direct : le stock de la cellule inclut encore cette ENTREE, donc
+      // `stock - quantite >= 0` equivaut a `stock >= quantite`.
+      const apresAnnulation = stockCellule.sub(dec(retirant.quantity));
+      if (apresAnnulation.lessThan(0)) {
+        throw badRequest(
+          `Annulation impossible : la marchandise entrée par ce mouvement a déjà été consommée depuis. ` +
+            `L'annulation ferait passer le stock du dépôt ${retirant.depotId}` +
+            `${retirant.lotId != null ? `, lot ${retirant.lotId}` : ''} de ${toNumber(stockCellule, 3)} à ` +
+            `${toNumber(apresAnnulation, 3)} unité(s). ` +
+            `Si la consommation est une erreur, réactivez d'abord le mouvement correspondant ; ` +
+            `sinon, consignez-la en PERTE ou en AJUSTEMENT d'inventaire. ` +
+            `Aucune modification n'a été enregistrée.`,
+        );
+      }
+
       amputations = await assertNoReservedOverlap(
         {
           type: retirant.type.code,
