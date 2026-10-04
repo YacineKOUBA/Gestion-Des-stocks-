@@ -61,6 +61,22 @@ export interface AvailabilityRow {
   libre: number;
 }
 
+/**
+ * F2 : `lignes` et les totaux n'ont pas le meme perimetre.
+ *
+ * `lignes` = cellules de stock libre strictement positif, triees FEFO. Sert de base
+ * au FEFO, au controle de disponibilite et a l'apercu affiche au directeur.
+ *
+ * `stockTotal` / `dejaReserve` = sommes sur TOUTES les cellules de l'article, y
+ * compris les cellules saturees. Servent de base au plafond. Les calculer sur
+ * `lignes` tronquerait la base et elargirait le plafond : c'est exactement F2.
+ */
+export interface AvailabilityRows {
+  lignes: AvailabilityRow[];
+  stockTotal: Prisma.Decimal;
+  dejaReserve: Prisma.Decimal;
+}
+
 function todayStart(): Date {
   const d = new Date();
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
@@ -82,12 +98,27 @@ function dayStart(value: Date): Date {
  * d'une autre unite) n'entre dans le calcul. Le lot "null" correspond aux
  * articles non lot-traces ; ces lignes passent apres les lots dates (ils n'ont pas
  * de peremption).
+ *
+ * F2 : `lignes` et les deux totaux ne portent pas sur le meme perimetre, et ne
+ * doivent jamais etre confondus :
+ *
+ *   - `lignes` ne contient que les cellules de stock libre strictement positif.
+ *     C'est la base du FEFO : une cellule saturee ne peut rien offrir, elle n'a donc
+ *     pas a y figurer, et son `libre` negatif ne doit surtout pas etre somme ;
+ *   - `stockTotal` et `dejaReserve` portent sur TOUTES les cellules. C'est la base
+ *     du plafond : une cellule saturee porte physiquement du stock ET porte une
+ *     promesse, les deux doivent donc compter.
+ *
+ * Avant F2, les totaux etaient calcules sur `lignes`, donc sur la base tronquee. Une
+ * cellule saturee etait alors doublement benie : son stock physique et sa promesse
+ * disparaissaient du plafond, qui se retrouvait plus large que la regle. Le filtre
+ * ne doit pas etre applique avant la sommation.
  */
 async function availabilityRows(
   articleId: number,
   db: Db,
   opts: { excludeReservationId?: bigint } = {},
-): Promise<AvailabilityRow[]> {
+): Promise<AvailabilityRows> {
   const article = await db.article.findUnique({
     where: { id: articleId },
     select: { isLotTracked: true },
@@ -160,21 +191,32 @@ async function availabilityRows(
     row.libre = toNumber(dec(row.quantity).sub(dec(row.reserve)), 3);
   }
 
-  return [...map.values()]
-    .filter((r) => r.libre > 0)
-    .sort((a, b) => {
-      // FEFO : peremption la plus proche d'abord ; les lots sans date en dernier.
-      if (a.lotId == null && b.lotId != null) return 1;
-      if (a.lotId != null && b.lotId == null) return -1;
-      if (a.expiryDate && b.expiryDate && a.expiryDate.getTime() !== b.expiryDate.getTime()) {
-        return a.expiryDate.getTime() - b.expiryDate.getTime();
-      }
-      if ((a.expiryDate ? 0 : 1) !== (b.expiryDate ? 0 : 1)) return a.expiryDate ? -1 : 1;
-      if (a.lotNumber && b.lotNumber && a.lotNumber !== b.lotNumber) {
-        return a.lotNumber.localeCompare(b.lotNumber);
-      }
-      return a.depotId - b.depotId || (a.locationId ?? 0) - (b.locationId ?? 0);
-    });
+  // F2 : totaux du PLAFOND, calcules sur toutes les cellules, AVANT tout filtre.
+  // Ce sont eux qui doivent porter la base de la regle des 15 %.
+  const toutesCellules = [...map.values()];
+  const stockTotal = toutesCellules.reduce((a, r) => a.add(dec(r.quantity)), new Prisma.Decimal(0));
+  const dejaReserve = toutesCellules.reduce((a, r) => a.add(dec(r.reserve)), new Prisma.Decimal(0));
+
+  return {
+    // Base du FEFO : cellules encore libres, dans l'ordre de peremption.
+    lignes: toutesCellules
+      .filter((r) => r.libre > 0)
+      .sort((a, b) => {
+        // FEFO : peremption la plus proche d'abord ; les lots sans date en dernier.
+        if (a.lotId == null && b.lotId != null) return 1;
+        if (a.lotId != null && b.lotId == null) return -1;
+        if (a.expiryDate && b.expiryDate && a.expiryDate.getTime() !== b.expiryDate.getTime()) {
+          return a.expiryDate.getTime() - b.expiryDate.getTime();
+        }
+        if ((a.expiryDate ? 0 : 1) !== (b.expiryDate ? 0 : 1)) return a.expiryDate ? -1 : 1;
+        if (a.lotNumber && b.lotNumber && a.lotNumber !== b.lotNumber) {
+          return a.lotNumber.localeCompare(b.lotNumber);
+        }
+        return a.depotId - b.depotId || (a.locationId ?? 0) - (b.locationId ?? 0);
+      }),
+    stockTotal,
+    dejaReserve,
+  };
 }
 
 /**
@@ -183,14 +225,14 @@ async function availabilityRows(
  * derniere valeur qui doit plafonner le champ quantite cote client.
  */
 export async function availability(articleId: number) {
-  const rows = await availabilityRows(articleId, prisma as unknown as Db);
-  const total = rows.reduce((a, r) => a + r.libre, 0);
-  const stockTotal = rows.reduce((a, r) => a + r.quantity, 0);
-  const reserve = rows.reduce((a, r) => a + r.reserve, 0);
+  // F2 : le plafond se calcule sur les totaux de TOUTES les cellules ; le FEFO et le
+  // stock libre affiche restent portes par les seules cellules de libre > 0.
+  const { lignes, stockTotal, dejaReserve } = await availabilityRows(articleId, prisma as unknown as Db);
+  const total = lignes.reduce((a, r) => a + r.libre, 0);
   const pct = await plafondPct();
   const etat = computePlafond({
-    stockTotal: dec(stockTotal),
-    dejaReserve: dec(reserve),
+    stockTotal,
+    dejaReserve,
     demande: dec(0),
     pct,
   });
@@ -206,7 +248,7 @@ export async function availability(articleId: number) {
     // Les deux termes sont deja arrondis : leur difference peut reintroduire une
     // erreur de virgule flottante (52.849999999999994), on la referme ici.
     plafondRestant: Math.max(0, Number((etat.plafond - etat.dejaReserve).toFixed(3))),
-    lignes: rows.map((r) => ({
+    lignes: lignes.map((r) => ({
       ...r,
       expiryDate: r.expiryDate?.toISOString().slice(0, 10) ?? null,
     })),
@@ -325,10 +367,11 @@ export async function createReservation(input: ReservationInput, userId: number)
       });
 
       for (const line of lines) {
-        const rows = await availabilityRows(line.articleId, tx);
-        const libre = rows.reduce<Prisma.Decimal>((a, r) => a.add(dec(r.libre)), new Prisma.Decimal(0));
-        const stockTotal = rows.reduce<Prisma.Decimal>((a, r) => a.add(dec(r.quantity)), new Prisma.Decimal(0));
-        const dejaReserve = rows.reduce<Prisma.Decimal>((a, r) => a.add(dec(r.reserve)), new Prisma.Decimal(0));
+        // F2 : le plafond porte sur les totaux de TOUTES les cellules, le controle de
+        // disponibilite sur le sous-ensemble de libre > 0. Invertir l'ordre des deux
+        // elargirait le plafond sans que la disponibilite bouge.
+        const { lignes, stockTotal, dejaReserve } = await availabilityRows(line.articleId, tx);
+        const libre = lignes.reduce<Prisma.Decimal>((a, r) => a.add(dec(r.libre)), new Prisma.Decimal(0));
 
         const art = await tx.article.findUnique({
           where: { id: line.articleId },
@@ -370,7 +413,7 @@ export async function createReservation(input: ReservationInput, userId: number)
         // FEFO : on consomme les lignes deja triees par peremption croissante, sur
         // leur stock LIBRE. Ce qui est ecrit ici est une promesse, pas une sortie.
         let reste = line.quantity;
-        for (const row of rows) {
+        for (const row of lignes) {
           if (reste.lte(0)) break;
           const part = dec(row.libre).greaterThan(reste) ? reste : dec(row.libre);
           await tx.reservationAllocation.create({
@@ -704,7 +747,10 @@ export async function validateReservation(id: bigint, userId: number) {
         sorties.push({ ...cell, quantity: libreCellule, depuisAllocation: a.id });
       }
 
-      const repli = await availabilityRows(a.articleId, tx, { excludeReservationId: id });
+      // Re-FEFO sur le stock libre : le sous-ensemble de cellules encore libres est
+      // ici la bonne base, et la SEULE sure. Sommmer des `libre` negatifs ferait
+      // baisser `libreTotal` et pourrait produire une quantite de sortie negative.
+      const repli = (await availabilityRows(a.articleId, tx, { excludeReservationId: id })).lignes;
       const libreTotal = repli.reduce<Prisma.Decimal>((s, r) => s.add(dec(r.libre)), new Prisma.Decimal(0));
       if (libreTotal.lessThan(manque)) {
         throw badRequest(
