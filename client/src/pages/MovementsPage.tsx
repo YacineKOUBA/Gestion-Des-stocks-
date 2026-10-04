@@ -86,6 +86,14 @@ export function MovementsPage() {
     conflict: ReservationOverlapConfirmation;
   } | null>(null);
   const [reactivateBusy, setReactivateBusy] = useState(false);
+  // F3 : meme asymetrie pour l'annulation. Annuler une ENTREE — ou la moitie SORTIE
+  // d'un TRANSFERT — retire du stock et peut donc mordre une reservation ACTIF. Le
+  // serveur refuse (409) et renvoie un jeton signe ; on reutilise le dialogue D20.
+  const [cancelOverlap, setCancelOverlap] = useState<{
+    move: Movement;
+    conflict: ReservationOverlapConfirmation;
+  } | null>(null);
+  const [cancelBusy, setCancelBusy] = useState(false);
 
   function advanceDraft() {
     const next = draftIndex + 1;
@@ -125,13 +133,24 @@ export function MovementsPage() {
   const canGoBack = offset > 0;
   const canGoForward = offset + pageSize < total;
 
-  async function handleCancel(move: Movement) {
-    if (!window.confirm(`Annuler le mouvement ${move.id} ?`)) return;
+  async function handleCancel(move: Movement, confirmToken?: string | null) {
+    // Premier essai : confirmation classique. Rejeu apres accord d'empietement : le
+    // dialogue D20 a deja fait office de confirmation, on ne redemande rien.
+    if (confirmToken == null && !window.confirm(`Annuler le mouvement ${move.id} ?`)) return;
     try {
-      await movementsApi.cancel(move.id);
+      await movementsApi.cancel(move.id, confirmToken ?? null);
+      setCancelOverlap(null);
+      setSuccess(`Mouvement ${move.id} annulé.`);
       movements.reload();
     } catch (err) {
-      window.alert(errorMessage(err, 'Annulation impossible'));
+      const conflict = overlapConfirmation(err);
+      if (conflict) {
+        setCancelOverlap({ move, conflict });
+      } else {
+        window.alert(errorMessage(err, 'Annulation impossible'));
+      }
+    } finally {
+      setCancelBusy(false);
     }
   }
 
@@ -384,6 +403,20 @@ export function MovementsPage() {
           onConfirm={() => {
             setReactivateBusy(true);
             void handleReactivate(reactivateOverlap.move, reactivateOverlap.conflict.confirmToken);
+          }}
+        />
+      ) : null}
+
+      {/* F3 : meme dialogue pour l'annulation, qui retire elle aussi du stock. */}
+      {cancelOverlap ? (
+        <OverlapConfirm
+          conflict={cancelOverlap.conflict}
+          context={`Annulation du mouvement ${cancelOverlap.move.id} : cette opération retire du stock.`}
+          busy={cancelBusy}
+          onCancel={() => setCancelOverlap(null)}
+          onConfirm={() => {
+            setCancelBusy(true);
+            void handleCancel(cancelOverlap.move, cancelOverlap.conflict.confirmToken);
           }}
         />
       ) : null}

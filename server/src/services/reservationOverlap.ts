@@ -39,6 +39,13 @@ export interface OverlapCell {
   quantite: Prisma.Decimal;
   /** Code du mouvement : SORTIE, PERTE, AJUSTEMENT... (pour le message). */
   operation: string;
+  /**
+   * F3 : ce que Z represente reellement. Par defaut « a sortir », ce qui est vrai
+   * pour une creation et pour une reactivation. Une ANNULATION d'entree retire
+   * aussi du stock, sans que l'utilisateur ait demande de sortir quoi que ce soit :
+   * nommer le geste evite un message qui pretend qu'on sort la marchandise.
+   */
+  geste?: string;
 }
 
 export interface OverlapConflict {
@@ -71,8 +78,8 @@ function lotLabel(lotNumber: string | null): string {
  * partir des trois quantites, jamais repris d'un champ stocke : c'est la seule
  * facon d'avoir un message qui reste juste si les quantites ont bouge entre-temps.
  */
-export function overlapFormula(lotNumber: string | null, Y: number, X: number, Z: number): string {
-  return `le lot ${lotLabel(lotNumber)} a été touché de ${toNumber(dec(X).add(dec(Z)).sub(dec(Y)), 3)} unités (${X} réservé + ${Z} à sortir − ${Y} au lot)`;
+export function overlapFormula(lotNumber: string | null, Y: number, X: number, Z: number, geste = 'à sortir'): string {
+  return `le lot ${lotLabel(lotNumber)} a été touché de ${toNumber(dec(X).add(dec(Z)).sub(dec(Y)), 3)} unités (${X} réservé + ${Z} ${geste} − ${Y} au lot)`;
 }
 
 /**
@@ -132,7 +139,7 @@ export async function detectOverlap(
       amputee: toNumber(v.qte, 3),
     })),
     message:
-      `Cette opération touche du stock réservé : ${overlapFormula(lotNumber, toNumber(Y, 3), toNumber(X, 3), toNumber(input.quantite, 3))}. ` +
+      `Cette opération touche du stock réservé : ${overlapFormula(lotNumber, toNumber(Y, 3), toNumber(X, 3), toNumber(input.quantite, 3), input.geste)}. ` +
       `Réservation(s) concernée(s) : ${[...touched.values()].map((v) => v.ref).join(', ')}. ` +
       `Confirmez-vous que ces quantités reservées peuvent être amputées ?`,
   };

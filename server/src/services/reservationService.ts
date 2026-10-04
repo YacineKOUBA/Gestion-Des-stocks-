@@ -771,6 +771,17 @@ export async function validateReservation(id: bigint, userId: number) {
 
     const sorties: SortieValidée[] = [];
 
+    // F4 : ce que CETTE validation a deja decide de sortir, cellule par cellule.
+    // Les sorties ne sont ecrites qu'apres la boucle ; tout ce qui se relit ici
+    // (stock d'une cellule, base du re-FEFO) les ignore, et se solde donc deux fois.
+    const prevu = new Map<string, Prisma.Decimal>();
+    const prevoir = (s: SortieValidée) => {
+      sorties.push(s);
+      const k = cellKey(s);
+      prevu.set(k, (prevu.get(k) ?? new Prisma.Decimal(0)).add(dec(s.quantity)));
+    };
+    const prevuDe = (k: string) => prevu.get(k) ?? new Prisma.Decimal(0);
+
     for (const a of allocations) {
       await tx.$queryRaw`SELECT id FROM "articles" WHERE id = ${a.articleId} FOR UPDATE`;
 
@@ -804,16 +815,18 @@ export async function validateReservation(id: bigint, userId: number) {
       if (restant.lessThanOrEqualTo(0)) continue;
 
       // Stock libre de la cellule promise, en ignorant les parts de CETTE
-      // reservation (qui sont en train d'etre honorees, pas de lui bloquer).
+      // reservation (qui sont en train d'etre honorees, pas de lui bloquer) et ce
+      // que la boucle a deja decide de sortir (F4).
       const libres = reservedByCell(
         await activeAllocations({ articleIds: [a.articleId], excludeReservationId: id }, tx),
       );
+      const cleCellule = cellKey(cell);
       const libreCellule = await cellStock(cell, tx).then((y) =>
-        y.sub(libres.get(cellKey(cell)) ?? new Prisma.Decimal(0)),
+        y.sub(libres.get(cleCellule) ?? new Prisma.Decimal(0)).sub(prevuDe(cleCellule)),
       );
 
       if (libreCellule.greaterThanOrEqualTo(restant)) {
-        sorties.push({ ...cell, quantity: restant, depuisAllocation: a.id });
+        prevoir({ ...cell, quantity: restant, depuisAllocation: a.id });
         continue;
       }
 
@@ -821,18 +834,30 @@ export async function validateReservation(id: bigint, userId: number) {
       // et on rejoue un FEFO sur le stock actuel (regle 4).
       const manque = restant.sub(libreCellule);
       if (libreCellule.greaterThan(0)) {
-        sorties.push({ ...cell, quantity: libreCellule, depuisAllocation: a.id });
+        prevoir({ ...cell, quantity: libreCellule, depuisAllocation: a.id });
       }
 
       // Re-FEFO sur le stock libre : le sous-ensemble de cellules encore libres est
       // ici la bonne base, et la SEULE sure. Sommmer des `libre` negatifs ferait
       // baisser `libreTotal` et pourrait produire une quantite de sortie negative.
+      // F4 : chaque `libre` est en outre RETRANCHE de ce que cette validation a
+      // deja prevu sur la cellule. Sans cela, deux allocations du meme article, dont
+      // les cellules promises ont ete amputees, repartaient deux fois sur le meme
+      // stock : la premiere trace n'etait pas encore en base, la seconde la relisait
+      // encore entiere, et les deux passaient le test de couverture.
       const repli = (await availabilityRows(a.articleId, tx, { excludeReservationId: id })).lignes;
-      const libreTotal = repli.reduce<Prisma.Decimal>((s, r) => s.add(dec(r.libre)), new Prisma.Decimal(0));
+      const encoreLibre = (r: (typeof repli)[number]) =>
+        dec(r.libre).sub(prevuDe(cellKey({ articleId: a.articleId, ...r })));
+      const libreTotal = repli.reduce<Prisma.Decimal>(
+        (s, r) => s.add(encoreLibre(r).greaterThan(0) ? encoreLibre(r) : new Prisma.Decimal(0)),
+        new Prisma.Decimal(0),
+      );
       if (libreTotal.lessThan(manque)) {
         throw badRequest(
           `Validation impossible : le stock réellement disponible ne couvre plus la réservation ${current.ref}. ` +
-            `Manque ${toNumber(manque, 3)} unité(s) sur l'article ${a.articleId}. ` +
+            `Manque ${toNumber(manque, 3)} unité(s) sur l'article ${a.articleId}, ` +
+            `et il ne reste que ${toNumber(libreTotal, 3)} unité(s) libres sur l'ensemble de ses cellules ` +
+            `une fois ce que cette réservation a déjà prévu. ` +
             `Aucune sortie n'a été enregistrée et la réservation reste active : réapprovisionnez le stock puis validez à nouveau.`,
         );
       }
@@ -840,8 +865,10 @@ export async function validateReservation(id: bigint, userId: number) {
       let reste = manque;
       for (const r of repli) {
         if (reste.lte(0)) break;
-        const part = dec(r.libre).greaterThan(reste) ? reste : dec(r.libre);
-        sorties.push({
+        const dispo = encoreLibre(r);
+        if (dispo.lessThanOrEqualTo(0)) continue;
+        const part = dispo.greaterThan(reste) ? reste : dispo;
+        prevoir({
           articleId: a.articleId,
           lotId: r.lotId,
           depotId: r.depotId,
@@ -858,6 +885,39 @@ export async function validateReservation(id: bigint, userId: number) {
       notes.push(
         `Lot ${a.lot?.lotNumber ?? 'sans lot'} amputé : ${toNumber(manque, 3)} unité(s) reprises sur le stock disponible (FEFO).`,
       );
+    }
+
+    // F4 : filet de securite, a poser AVANT toute ecriture. Le calcul de la boucle
+    // retranche deja les sorties prevues, donc l'invariant ne devrait jamais se
+    // declencher ; s'il le fait, c'est qu'une autre voie a produit une sortie
+    // impossible, et mieux vaut refuser la validation que laisser un stock negatif.
+    // On refuse donc ici, transaction comprise : aucune sortie, aucun changement
+    // d'etat, la reservation reste ACTIF.
+    const prevuTotal = new Map<string, Prisma.Decimal>();
+    const celluleDe = new Map<string, SortieValidée>();
+    for (const s of sorties) {
+      const k = cellKey(s);
+      prevuTotal.set(k, (prevuTotal.get(k) ?? new Prisma.Decimal(0)).add(dec(s.quantity)));
+      celluleDe.set(k, s);
+    }
+    // Les engagements des AUTRES reservations, sur les seuls articles concernes : ce
+    // sont eux qui doivent etre deduits du stock de la cellule pour obtenir son libre
+    // reel. Les parts de CETTE reservation sont exclues, comme partout ailleurs.
+    const articlesConcernes = [...new Set(sorties.map((s) => s.articleId))];
+    const autresEngagements = reservedByCell(
+      await activeAllocations({ articleIds: articlesConcernes, excludeReservationId: id }, tx),
+    );
+    for (const [k, prevu] of prevuTotal) {
+      const c = celluleDe.get(k)!;
+      const libre = (await cellStock(c, tx)).sub(autresEngagements.get(k) ?? new Prisma.Decimal(0));
+      if (prevu.greaterThan(libre)) {
+        throw badRequest(
+          `Validation impossible : la réservation ${current.ref} porterait ${toNumber(prevu, 3)} unité(s) ` +
+            `sur une cellule qui n'a que ${toNumber(libre, 3)} unité(s) libres ` +
+            `(article ${c.articleId}, dépôt ${c.depotId}, lot ${c.lotId ?? 'sans lot'}). ` +
+            `Aucune sortie n'a été enregistrée et la réservation reste active.`,
+        );
+      }
     }
 
     const today = new Date();

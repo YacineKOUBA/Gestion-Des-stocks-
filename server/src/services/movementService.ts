@@ -30,6 +30,12 @@ export interface MoveInput {
   sens?: number | null;
   inventoryId?: bigint | null;
   /**
+   * F3 : libelle du geste pour le message d'empietement. Une annulation d'entree
+   * retire du stock sans que l'utilisateur ait sorti quoi que ce soit ; sans ce
+   * libelle, le message lui dirait « 200 a sortir » alors qu'il annule.
+   */
+  geste?: string | null;
+  /**
    * D20, decision 7 : jeton renvoye par un refus d'empietement sur stock reserve.
    * L'operation est rejouee a l'identique, avec ce jeton, une fois que
    * l'utilisateur a confirme. Sans jeton valide, l'ecriture est refusee.
@@ -203,7 +209,13 @@ async function assertNoReservedOverlap(
   };
 
   const conflit = await detectOverlap(
-    { cell, stockCellule, quantite: dec(input.quantity), operation: input.type },
+    {
+      cell,
+      stockCellule,
+      quantite: dec(input.quantity),
+      operation: input.type,
+      ...(input.geste ? { geste: input.geste } : {}),
+    },
     db,
   );
   if (!conflit) return [];
@@ -367,7 +379,36 @@ export async function createMovement(input: MoveInput, userId: number, db?: Db) 
   return result;
 }
 
-export async function cancelMovement(moveId: bigint, userId: number) {
+/**
+ * Annule un mouvement et, pour un TRANSFERT, sa moitie liee.
+ *
+ * F3 : l'annulation retire du stock exactement comme la creation — dans le cas
+ * inverse. Annuler une ENTREE (`sens +1`) fait DISPARAITRE ce qu'elle avait
+ * apporte, annuler la moitie SORTIE d'un TRANSFERT reprend la marchandise a sa
+ * source : dans les deux cas la cellule perd de la quantite, donc une promesse
+ * ACTIF peut etre amputee sans que personne ne l'ait demande. Symetrique de la
+ * reactivation (F1, decision D20 n° 4), qui avait ete traitee et pas l'annulation.
+ *
+ * Le controle est donc le meme, avec la meme formule `X + Z - Y`, le meme refus
+ * 409, le meme jeton signe et la meme trace d'audit des amputations consenties.
+ * Seule difference : ici Y est le stock AVANT annulation et Z la quantite que
+ * l'annulation va retirer, ce qui donne la meme inequation
+ * `X + Z <= Y` — l'annulation est donc traitee comme une sortie de meme
+ * quantite, ce qui est exact.
+ *
+ * Une ANNULATION qui rend du stock (annuler une SORTIE) ne peut pas morde une
+ * promesse : elle en libere. `assertNoReservedOverlap` ne s'y declenche donc pas,
+ * et rien n'a besoin d'etre change.
+ *
+ * `operation` est le code du mouvement annule, alors qu'il s'agit d'un retrait :
+ * le message dit « annulation de l'ENTREE » plutot que « SORTIE », ce qui est plus
+ * honnete pour l'utilisateur. La formule, elle, reste `X + Z - Y`.
+ */
+export async function cancelMovement(
+  moveId: bigint,
+  userId: number,
+  confirmToken?: string | null,
+) {
   const move = await prisma.move.findUnique({
     where: { id: moveId },
     include: { type: true },
@@ -375,8 +416,61 @@ export async function cancelMovement(moveId: bigint, userId: number) {
   if (!move) throw notFound('Mouvement introuvable');
   if (move.status === 'ANNULE') throw badRequest('Mouvement déjà annulé');
 
+  const paire =
+    move.type.code === MoveTypeCode.TRANSFERT
+      ? await prisma.move.findFirst({ where: { linkMoveId: moveId }, include: { type: true } })
+      : null;
+
+  // Moitie dont l'annulation RETIRE du stock. Le stock d'une cellule est la somme
+  // des `quantite x sens` des mouvements ACTIFS : retirer une ENTREE (`sens +1`)
+  // fait BAISSER la cellule, alors que retirer une SORTIE (`sens -1`) la fait
+  // monter. La moitie a surveiller est donc l'ENTREE, et pour un TRANSFERT c'est
+  // sa moitie destination — l'inverse exact de la reactivation, ou l'on
+  // re-integrait la SORTIE.
+  const retirant = [move, paire].find((m) => m != null && m.sens > 0) ?? null;
+
+  let amputations: Amputation[] = [];
+
   const updated = await prisma.$transaction(async (tx) => {
-    await tx.move.update({
+    await tx.$queryRaw`SELECT id FROM "articles" WHERE id = ${move.articleId} FOR UPDATE`;
+
+    if (retirant) {
+      // Y = stock de la cellule tel qu'il est, l'annulation n'ayant pas encore eu
+      // lieu : c'est exactement la valeur contre laquelle la formule s'applique.
+      const stockCellule = await availableStockDeci(
+        {
+          articleId: retirant.articleId,
+          lotId: retirant.lotId,
+          depotId: retirant.depotId,
+          locationId: retirant.locationId,
+        },
+        tx,
+      );
+      amputations = await assertNoReservedOverlap(
+        {
+          type: retirant.type.code,
+          articleId: retirant.articleId,
+          quantity: toNumber(retirant.quantity, 3),
+          movementDate: retirant.movementDate,
+          depotId: retirant.depotId,
+          locationId: retirant.locationId,
+          lotId: retirant.lotId,
+          confirmToken: confirmToken ?? null,
+          geste: 'à retirer par cette annulation',
+        },
+        // `sens` negatif : du point de vue de la cellule, l'annulation de cette ENTREE
+        // est exactement une SORTIE de la meme quantite. C'est ce que la formule
+        // `X + Z - Y` doit recevoir, et `assertNoReservedOverlap` ne s'interesse qu'aux
+        // retraits — sans ce signe, il ne ferait rien et le controle serait silencieusement
+        // inoperant.
+        -1,
+        stockCellule,
+        userId,
+        tx,
+      );
+    }
+
+    const updatedMove = await tx.move.update({
       where: { id: moveId },
       data: { status: 'ANNULE', canceledBy: userId, canceledAt: new Date() },
     });
@@ -386,10 +480,17 @@ export async function cancelMovement(moveId: bigint, userId: number) {
         data: { status: 'ANNULE', canceledBy: userId, canceledAt: new Date() },
       });
     }
-    return move;
+    // m3 : la reponse renvoyait l'instantane relu AVANT la mise a jour, donc
+    // l'ecran reaffichait « ACTIF » juste apres avoir annule. On renvoie la ligne
+    // ecrite, avec son statut et sa date d'annulation.
+    return updatedMove;
   });
   await audit(userId, 'ANNULATION', 'movement', String(moveId), {
     moveId,
+    type: move.type.code,
+    articleId: move.articleId,
+    quantity: move.quantity,
+    ...(amputations.length ? { amputations } : {}),
   });
   return updated;
 }

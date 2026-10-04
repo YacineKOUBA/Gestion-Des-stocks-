@@ -141,7 +141,11 @@ export const movementsApi = {
   list: (filters: { articleId?: number; depotId?: number; lotId?: number; type?: string; from?: string; to?: string; limit?: number; offset?: number } = {}): Promise<Paged<Movement>> =>
     requestPaged<Movement>('/movements', { query: { ...filters } }),
   create: (payload: MovementPayload) => request<Movement | { sortie: Movement; entree: Movement }>('/movements', { method: 'POST', body: payload }),
-  cancel: (id: string) => request<Movement>(`/movements/${id}/cancel`, { method: 'PATCH' }),
+  // F3 : l'annulation retire du stock (annuler une ENTREE, ou la moitie SORTIE d'un
+  // TRANSFERT), elle est donc soumise au meme controle d'empietement D20 que la
+  // creation et la reactivation : le jeton signe fait partie de l'appel.
+  cancel: (id: string, confirmToken?: string | null) =>
+    request<Movement>(`/movements/${id}/cancel`, { method: 'PATCH', body: { confirmToken: confirmToken ?? null } }),
   // D20 : reactiver un mouvement qui retire du stock peut mordre dans une reservation.
   // Le serveur refuse (409) et renvoie un jeton signe ; on le rejoue avec l'identite
   // du mouvement si l'utilisateur a accepte l'amputation.

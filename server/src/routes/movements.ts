@@ -62,7 +62,12 @@ router.post('/', requirePermission('movement:write'), async (req, res) => {
 // Annulation / reactivation / suppression : correction apres coup, reservee a l'administrateur.
 router.patch('/:id/cancel', requirePermission('movement:revise'), async (req, res) => {
   const id = toBigInt(req.params.id);
-  res.json(await cancelMovement(id, req.user!.id));
+  // F3 : annuler une ENTREE, ou la moitie SORTIE d'un TRANSFERT, retire du stock ;
+  // l'operation est donc soumise au meme controle d'empietement que la creation et
+  // que la reactivation. Le client renvoie le jeton signe si l'utilisateur a accepte
+  // l'amputation des reservations.
+  const data = parse(reactivateSchema, req.body ?? {});
+  res.json(await cancelMovement(id, req.user!.id, data.confirmToken ?? null));
 });
 
 router.patch('/:id/reactivate', requirePermission('movement:revise'), async (req, res) => {
