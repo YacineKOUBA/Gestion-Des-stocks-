@@ -6,15 +6,39 @@ import { requirePermission } from '../middlewares/permissions';
 
 const router = Router();
 
+// Plafond dur de pagination : il protege la base, il n'empeche pas l'affichage
+// correct car le total reel est toujours renvoye dans X-Total-Count.
+const MAX_LIMIT = 500;
+
 router.get('/', requirePermission('article:read'), async (req, res) => {
   const q = req.query;
-  const articles = await articleService.listArticles({
+
+  // Pagination VOLONTAIRE : sans `limit` on renvoie tout le catalogue, parce que
+  // les listes deroulantes des bons, reservations, prets et lots ont besoin de
+  // l'integralite des articles. Seule la page Article demande des pages de 75.
+  const limitRaw = q.limit === undefined ? Number.NaN : Number(q.limit);
+  const offsetRaw = Number(q.offset);
+  const limit =
+    Number.isFinite(limitRaw) && limitRaw > 0
+      ? Math.min(Math.max(Math.trunc(limitRaw), 1), MAX_LIMIT)
+      : undefined;
+  const offset = Number.isFinite(offsetRaw) && offsetRaw > 0 ? Math.trunc(offsetRaw) : 0;
+
+  const { items, total } = await articleService.listArticles({
     search: q.search as string | undefined,
     categoryId: q.categoryId ? Number(q.categoryId) : undefined,
     familyId: q.familyId ? Number(q.familyId) : undefined,
     statut: q.statut as string | undefined,
+    limit,
+    offset,
   });
-  res.json(articles);
+
+  res.setHeader('X-Total-Count', String(total));
+  if (limit !== undefined) {
+    res.setHeader('X-Limit', String(limit));
+    res.setHeader('X-Offset', String(offset));
+  }
+  res.json(items);
 });
 
 router.get('/:id', requirePermission('article:read'), async (req, res) => {

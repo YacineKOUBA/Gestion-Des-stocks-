@@ -70,6 +70,9 @@ export interface ArticleFilters {
   categoryId?: number;
   familyId?: number;
   statut?: string;
+  /** demandes uniquement par articlesApi.listPaged ; absent = catalogue complet. */
+  limit?: number;
+  offset?: number;
 }
 
 export interface ArticlePayload {
@@ -93,7 +96,11 @@ export interface ArticlePayload {
 }
 
 export const articlesApi = {
+  /** Catalogue complet : utilise par les listes deroulantes des autres ecrans. */
   list: (filters: ArticleFilters = {}) => request<Article[]>('/articles', { query: { ...filters } }),
+  /** Page de 75 lignes + total reel : utilise par la page Article. */
+  listPaged: (filters: ArticleFilters = {}): Promise<Paged<Article>> =>
+    requestPaged<Article>('/articles', { query: { ...filters } }),
   get: (id: number) => request<Article>(`/articles/${id}`),
   create: (payload: ArticlePayload) => request<Article>('/articles', { method: 'POST', body: payload }),
   update: (id: number, payload: Partial<ArticlePayload>) =>

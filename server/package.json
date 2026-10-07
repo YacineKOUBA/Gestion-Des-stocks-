@@ -11,6 +11,7 @@
     "migrate": "prisma migrate dev",
     "deploy:migrate": "prisma migrate deploy",
     "seed": "tsx prisma/seed.ts",
+    "test": "tsx test/permissions-ecrans.ts",
     "typecheck": "tsc --noEmit"
   },
   "prisma": {

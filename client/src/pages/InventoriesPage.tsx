@@ -70,7 +70,7 @@ export function InventoriesPage() {
 }
 
 function OpenInventoryModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
-  const depots = useAsync(() => referentialApi.depots(), []);
+  const depots = useAsync(() => referentialApi.depots(), [], { label: 'Dépôts' });
   const [title, setTitle] = useState('');
   const [depotId, setDepotId] = useState('');
   const [error, setError] = useState<string | null>(null);

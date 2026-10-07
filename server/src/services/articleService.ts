@@ -6,12 +6,29 @@ import { notFound, conflict, badRequest } from '../utils/apiError';
 import { audit } from '../utils/audit';
 import { dec, toNumber } from '../utils/decimal';
 
-export async function listArticles(filters: {
+export interface ArticleListFilters {
   search?: string;
   categoryId?: number;
   familyId?: number;
   statut?: string;
-}) {
+  /**
+   * Nombre maximum de lignes renvoyees. Absent = PAS de pagination : tout le
+   * catalogue part au client. C'est indispensable car les listes deroulantes des
+   * bons, reservations, prets et lots ont besoin de l'integralite des articles.
+   */
+  limit?: number;
+  offset?: number;
+}
+
+const ARTICLE_INCLUDE = {
+  category: true,
+  family: true,
+  unit: true,
+  origin: true,
+  packaging: true,
+} satisfies Prisma.ArticleInclude;
+
+export async function listArticles(filters: ArticleListFilters): Promise<{ items: Article[]; total: number }> {
   const where: Prisma.ArticleWhereInput = {};
   if (filters.search) {
     where.OR = [
@@ -23,17 +40,24 @@ export async function listArticles(filters: {
   if (filters.familyId) where.familyId = filters.familyId;
   if (filters.statut) where.statut = filters.statut as ArticleStatut;
 
-  return prisma.article.findMany({
-    where,
-    include: {
-      category: true,
-      family: true,
-      unit: true,
-      origin: true,
-      packaging: true,
-    },
-    orderBy: { code: 'asc' },
-  });
+  // `code` est UNIQUE en base : le tri par code est donc total et la pagination ne
+  // peut pas faire sauter ni repeter un article entre deux pages.
+  if (filters.limit === undefined) {
+    const items = await prisma.article.findMany({ where, include: ARTICLE_INCLUDE, orderBy: { code: 'asc' } });
+    return { items, total: items.length };
+  }
+
+  const [total, items] = await prisma.$transaction([
+    prisma.article.count({ where }),
+    prisma.article.findMany({
+      where,
+      include: ARTICLE_INCLUDE,
+      orderBy: { code: 'asc' },
+      take: filters.limit,
+      skip: filters.offset ?? 0,
+    }),
+  ]);
+  return { items, total };
 }
 
 export async function getArticle(id: number) {

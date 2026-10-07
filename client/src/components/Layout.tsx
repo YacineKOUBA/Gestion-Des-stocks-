@@ -1,6 +1,8 @@
-import { NavLink, Navigate, Outlet, useNavigate } from 'react-router-dom';
+import { NavLink, Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Spinner } from './ui';
+import { clearLoadFailures } from '../hooks/loadFailures';
+import { LoadFailureBanner, Spinner } from './ui';
 import type { Permission } from '../types';
 
 interface NavItem {
@@ -84,6 +86,15 @@ export function RequirePermission({ permission }: { permission: Permission }) {
 export function Layout() {
   const { user, can, signOut } = useAuth();
   const navigate = useNavigate();
+  const { pathname } = useLocation();
+
+  // D28 : un echec de liste constate sur un ecran ne doit pas continuer
+  // d'ecranter le suivant. Les enfants montent avant cet effet, mais leurs
+  // chargements asynchrones se resolvent apres : la remise a zero a donc bien lieu
+  // avant que la page courante ne puisse signaler quoi que ce soit.
+  useEffect(() => {
+    clearLoadFailures();
+  }, [pathname]);
 
   function handleLogout() {
     signOut();
@@ -94,7 +105,9 @@ export function Layout() {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
-          <span className="brand-mark">GD</span>
+          <span className="brand-mark-box">
+            <img className="brand-logo" src="/logo-gd-alpha.png" alt="GD Trading" />
+          </span>
           <span className="brand-text">
             GD Trading
             <small>Gestion des stocks</small>
@@ -124,6 +137,7 @@ export function Layout() {
           </button>
         </header>
         <main className="content">
+          <LoadFailureBanner />
           <Outlet />
         </main>
       </div>

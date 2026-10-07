@@ -106,10 +106,10 @@ export function DashboardPage() {
                   </div>
                 ))}
               </div>
-              {flags.data.lots.filter((l) => l.flag === 'ROUGE' || l.flag === 'PERIME').length > 0 ? (
+              {flags.data.lots.filter((l) => l.flag === 'PERIME' || l.flag === 'ORANGE').length > 0 ? (
                 <ul className="alert-list">
                   {flags.data.lots
-                    .filter((l) => l.flag === 'ROUGE' || l.flag === 'PERIME')
+                    .filter((l) => l.flag === 'PERIME' || l.flag === 'ORANGE')
                     .slice(0, 8)
                     .map((l) => (
                       <li key={l.lotId}>
@@ -123,7 +123,7 @@ export function DashboardPage() {
                     ))}
                 </ul>
               ) : (
-                <p className="empty">Aucun lot critique.</p>
+                <p className="empty">Aucun lot périmé ou arrivant à péremption sous 3 mois.</p>
               )}
             </>
           ) : null}

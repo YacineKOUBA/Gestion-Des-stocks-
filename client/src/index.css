@@ -15,6 +15,10 @@
   --red-bg: #fee2e2;
   --orange: #b45309;
   --orange-bg: #fef3c7;
+  /* D24 : le jaune doit se distinguer de l'ambre « orange » sans le concurrencer :
+     teinte lemon pale sur un texte brun plus fonce. */
+  --yellow: #854d0e;
+  --yellow-bg: #fefce8;
   --info: #3a3f47;
   --info-bg: #e5e7eb;
   --neutral: #6b7280;
@@ -78,6 +82,33 @@ a {
   align-items: center;
   justify-content: center;
   font-weight: 700;
+}
+
+/* Logo officiel GD Trading (option A). Le logo est panoramique (2,27:1) : on ne peut
+   pas le faire tenir dans le carre de 38px sans le rendre illisible, il le remplace
+   donc en largeur en gardant sa hauteur, et le nom reste affiche a cote.
+
+   L'image est en PNG a fond TRANSPARENT : le blanc du fichier d'origine n'etait pas
+   un blanc pur (mesure : #f7f7f7) alors que la carte de connexion est en #ffffff.
+   Garde tel quel, ce decalage de 8 niveaux faisait voir un carre gris autour du logo.
+   Le logo se fond donc dans le fond de la page, quel qu'il soit.
+
+   Sur la barre laterale foncee, le fond doit rester lisible : la pastille blanche est
+   la sur la boite parente, pas sur l'image. */
+.brand-logo {
+  height: 38px;
+  width: auto;
+  display: block;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+.brand-mark-box {
+  background: #fff;
+  border-radius: 8px;
+  padding: 3px 7px;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
 }
 .brand-text {
   display: flex;
@@ -461,6 +492,10 @@ input[type='checkbox'] {
   background: var(--orange-bg);
   color: var(--orange);
 }
+.badge-yellow {
+  background: var(--yellow-bg);
+  color: var(--yellow);
+}
 .badge-info {
   background: var(--info-bg);
   color: var(--info);
@@ -483,6 +518,14 @@ input[type='checkbox'] {
 .alert-success {
   background: var(--green-bg);
   color: var(--green);
+}
+/* D28 : bandeau des listes non chargees. Clignote volontairement en ambre et non
+   en rouge : ce n'est pas une panne de la page, c'est un controle incomplet, et la
+   page reste utilisable. Le rouge est deja reserve aux erreurs bloquantes. */
+.load-failure {
+  margin-bottom: 14px;
+  border-left: 3px solid var(--yellow);
+  line-height: 1.5;
 }
 .alert-warning {
   background: var(--orange-bg);
@@ -713,6 +756,11 @@ input[type='checkbox'] {
 .brand-large {
   padding: 0;
   justify-content: center;
+}
+/* Sur l'ecran de connexion le logo dispose de toute la largeur de la carte : on
+   l'affiche en grand, il devient l'identite visuelle de la page. */
+.brand-large .brand-logo {
+  height: 76px;
 }
 .brand-large .brand-text {
   color: var(--text);

@@ -1,11 +1,11 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { articlesApi, referentialApi, type ArticlePayload } from '../services/endpoints';
 import { useAuth } from '../context/AuthContext';
 import { errorMessage, useAsync } from '../hooks/useAsync';
 import { Badge, Card, ErrorMessage, Field, Modal, PageHeader, SearchSelect, Spinner } from '../components/ui';
 import { DataTable, type Column } from '../components/DataTable';
 import type { Article } from '../types';
-import { formatMoney, toNumberOrNull } from '../utils/format';
+import { formatMoney, formatNumber, toNumberOrNull } from '../utils/format';
 import { CURRENCY_OPTIONS } from '../utils/currencies';
 import { isFamilyCategory } from '../utils/families';
 
@@ -54,11 +54,16 @@ const emptyForm: FormState = {
   isLotTracked: false,
 };
 
+const PAGE_SIZE_DEFAULT = 75;
+const PAGE_SIZE_OPTIONS = [75, 150, 300];
+
 export function ArticlesPage() {
   const { can } = useAuth();
   const [search, setSearch] = useState('');
   const [categoryId, setCategoryId] = useState('');
   const [editing, setEditing] = useState<Article | 'new' | null>(null);
+  const [pageSize, setPageSize] = useState(PAGE_SIZE_DEFAULT);
+  const [offset, setOffset] = useState(0);
 
   async function handleDelete(a: Article) {
     if (
@@ -76,11 +81,47 @@ export function ArticlesPage() {
     }
   }
 
-  const categories = useAsync(() => referentialApi.categories(), []);
+  const categories = useAsync(() => referentialApi.categories(), [], { label: 'Catégories' });
   const articles = useAsync(
-    () => articlesApi.list({ search: search || undefined, categoryId: categoryId ? Number(categoryId) : undefined }),
-    [search, categoryId],
+    () =>
+      articlesApi.listPaged({
+        search: search || undefined,
+        categoryId: categoryId ? Number(categoryId) : undefined,
+        limit: pageSize,
+        offset,
+      }),
+    [search, categoryId, pageSize, offset],
   );
+
+  // Un changement de filtre ou de taille de page doit revenir au début de la liste.
+  function applyFilter(setter: (v: string) => void) {
+    return (value: string) => {
+      setter(value);
+      setOffset(0);
+    };
+  }
+
+  const total = articles.data?.total ?? 0;
+  const firstShown = total === 0 ? 0 : offset + 1;
+  const lastShown = Math.min(offset + pageSize, total);
+  const canGoBack = offset > 0;
+  const canGoForward = offset + pageSize < total;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const currentPage = Math.floor(offset / pageSize) + 1;
+
+  // Apres la suppression du dernier article d'une page, la page courante peut
+  // devenir invalide (offset au-dela du total renvoye par le serveur). On ramene
+  // l'offset sur la derniere page reelle plutot que d'afficher un tableau vide.
+  //
+  // Le recalcul se fait sur `total` et non sur le nombre de lignes recues : au
+  // moment ou l'effet s'execute, `articles.data` peut encore contenir la page
+  // precedente (vide), ce qui faisait reculer de deux crans au lieu d'un.
+  useEffect(() => {
+    if (articles.loading || articles.error || !articles.data) return;
+    const total = articles.data.total;
+    const dernierOffset = total > 0 ? Math.floor((total - 1) / pageSize) * pageSize : 0;
+    if (offset > dernierOffset) setOffset(dernierOffset);
+  }, [articles.loading, articles.error, articles.data, offset, pageSize]);
 
   const columns: Column<Article>[] = [
     { key: 'code', header: 'Code article' },
@@ -128,9 +169,9 @@ export function ArticlesPage() {
           <input
             placeholder="Rechercher (code ou désignation)"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => applyFilter(setSearch)(e.target.value)}
           />
-          <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
+          <select value={categoryId} onChange={(e) => applyFilter(setCategoryId)(e.target.value)}>
             <option value="">Toutes les catégories</option>
             {categories.data?.map((c) => (
               <option key={c.id} value={c.id}>
@@ -168,11 +209,52 @@ export function ArticlesPage() {
                   ] as Column<Article>[])
                 : []),
             ]}
-            rows={articles.data ?? []}
+            rows={articles.data?.items ?? []}
             rowKey={(a) => a.id}
             empty="Aucun article."
           />
         )}
+
+        {total > pageSize || offset > 0 ? (
+          <div className="pagination">
+            <span className="muted">
+              {formatNumber(firstShown)}–{formatNumber(lastShown)} sur {formatNumber(total)} articles — page{' '}
+              {formatNumber(currentPage)} / {formatNumber(totalPages)}
+            </span>
+            <div className="pagination-controls">
+              <select
+                value={pageSize}
+                onChange={(e) => {
+                  setPageSize(Number(e.target.value));
+                  setOffset(0);
+                }}
+                aria-label="Lignes par page"
+              >
+                {PAGE_SIZE_OPTIONS.map((n) => (
+                  <option key={n} value={n}>
+                    {n} / page
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="btn btn-small"
+                disabled={!canGoBack}
+                onClick={() => setOffset(Math.max(0, offset - pageSize))}
+              >
+                Précédent
+              </button>
+              <button
+                type="button"
+                className="btn btn-small"
+                disabled={!canGoForward}
+                onClick={() => setOffset(offset + pageSize)}
+              >
+                Suivant
+              </button>
+            </div>
+          </div>
+        ) : null}
       </Card>
 
       {editing ? (
@@ -198,11 +280,11 @@ function ArticleFormModal({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const categories = useAsync(() => referentialApi.categories(), []);
-  const units = useAsync(() => referentialApi.units(), []);
-  const families = useAsync(() => referentialApi.families(), []);
-  const packaging = useAsync(() => referentialApi.packaging(), []);
-  const origins = useAsync(() => referentialApi.origins(), []);
+  const categories = useAsync(() => referentialApi.categories(), [], { label: 'Catégories' });
+  const units = useAsync(() => referentialApi.units(), [], { label: 'Unités' });
+  const families = useAsync(() => referentialApi.families(), [], { label: 'Familles' });
+  const packaging = useAsync(() => referentialApi.packaging(), [], { label: 'Conditionnements' });
+  const origins = useAsync(() => referentialApi.origins(), [], { label: 'Origines' });
 
   const [form, setForm] = useState<FormState>(
     article

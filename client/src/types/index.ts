@@ -1,4 +1,4 @@
-export type RoleCode = 'ADMIN' | 'MAGASINIER' | 'TOP_MANAGEMENT' | 'SALES_ADMIN';
+export type RoleCode = 'ADMIN' | 'MAGASINIER' | 'TOP_MANAGEMENT' | 'SALES_ADMIN' | 'MASTER_DATA';
 
 /**
  * Droits de l'application (D16).
@@ -80,6 +80,7 @@ export interface Unit {
 }
 export interface Packaging {
   id: number;
+  code: string;
   label: string;
 }
 export interface Origin {
@@ -150,7 +151,7 @@ export interface Lot {
   /** Total SORTIE du lot (depart client) et date de derniere sortie : sert au RETOUR. */
   sortiQty?: number;
   lastExitAt?: string | null;
-  flag?: 'PERIME' | 'ROUGE' | 'ORANGE' | 'VERT' | null;
+  flag?: LotFlagCode | null;
   article?: { code: string; designation: string; currency?: string; unitPrice?: string | number; unit?: { code: string } };
 }
 
@@ -486,7 +487,8 @@ export interface StockByCategoryRow {
   quantity: number;
 }
 
-export type LotFlagCode = 'ROUGE' | 'ORANGE' | 'VERT' | 'PERIME';
+/** D24 : quatre niveaux. Le rouge designe les seuls lots deja perimes (code PERIME). */
+export type LotFlagCode = 'PERIME' | 'ORANGE' | 'JAUNE' | 'VERT';
 
 export interface LotFlag {
   lotId: number;

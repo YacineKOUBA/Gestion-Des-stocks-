@@ -1,6 +1,6 @@
 ﻿import { prisma } from '../prisma';
 import { stockWithThresholds } from './stockService';
-import { lotFlag, type LotFlagCode } from '../utils/lotFlag';
+import { lotFlag, LOT_FLAGS, LOT_FLAGS_ALERTE, type LotFlagCode } from '../utils/lotFlag';
 import { Prisma } from '@prisma/client';
 import { dec, toNumber } from '../utils/decimal';
 import { isLotExhausted, lotStocks } from '../utils/lotStock';
@@ -57,7 +57,9 @@ export async function kpis(periodDays = 30) {
 
 export async function lotsFlags() {
   const now = new Date();
-  const bins = { ROUGE: 0, ORANGE: 0, VERT: 0, PERIME: 0 };
+  // D24 : quatre niveaux, du plus urgent au plus calme. Les compteurs sont construits a
+  // partir de LOT_FLAGS, donc ajouter un niveau ne peut pas en oublier un.
+  const bins = Object.fromEntries(LOT_FLAGS.map((f) => [f, 0])) as Record<LotFlagCode, number>;
   const lots = await prisma.lot.findMany({
     where: { expiryDate: { not: null } },
     select: { id: true, lotNumber: true, expiryDate: true, article: { select: { code: true, designation: true } } },
@@ -94,7 +96,10 @@ export async function alerts() {
   // doublon n'etait consomme par aucun ecran et aurait fait fuiter les prets vers
   // les profils qui n'y ont pas droit (le magasinier).
   const [stock, flags] = await Promise.all([articleAlerts(), lotsFlags()]);
-  return { stock, lots: flags.lots.filter((l) => l.flag === 'ROUGE' || l.flag === 'PERIME') };
+  // D24 : la carte d'alertes retient les deux niveaux les plus urgents, perimes et
+  // peremption sous 3 mois. La fenetre d'urgence passe donc de 6 mois a 3 mois :
+  // c'est la consequence directe de la nouvelle echelle, elle est voulue.
+  return { stock, lots: flags.lots.filter((l) => LOT_FLAGS_ALERTE.includes(l.flag as LotFlagCode)) };
 }
 
 export async function stockByCategory() {

@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react';
+import { useLoadFailures } from '../hooks/loadFailures';
 
 export function Spinner() {
   return <div className="spinner" role="status" aria-label="Chargement" />;
@@ -12,6 +13,37 @@ export function ErrorMessage({ message }: { message: ReactNode | null }) {
 export function SuccessMessage({ message }: { message: string | null }) {
   if (!message) return null;
   return <div className="alert alert-success">{message}</div>;
+}
+
+/**
+ * D28 : bandeau des listes de reference qui n'ont pas pu etre chargees.
+ *
+ * Il est monte une seule fois, dans le `Layout` : les pages n'ont rien a ecrire
+ * pour signaler l'echec d'une liste, il leur suffit de passer un libelle a
+ * `useAsync`.
+ *
+ * Le libelle est indispensable. Sans lui, l'utilisateur verrait « une liste n'a
+ * pas pu etre chargee » au-dessus d'un deroulant vide, sans moyen de savoir
+ * lequel — c'est-a-dire le meme defaut qu'a corriger, en plus bavard. Avec lui,
+ * l'avertissement et le deroulant vide se rejoignent, et le rapport a
+ * l'administrateur devient possible.
+ */
+export function LoadFailureBanner() {
+  const failures = useLoadFailures();
+  if (failures.length === 0) return null;
+  return (
+    <div className="alert alert-error load-failure" role="alert">
+      <strong>
+        {failures.length === 1
+          ? "Une liste n'a pas pu etre chargee"
+          : `${failures.length} listes n'ont pas pu etre chargees`}
+      </strong>{' '}
+      — le ou les controles qui en dependent restent vides, alors qu'ils semblent
+      reellement vides. Liste en cause :{' '}
+      {failures.map((f) => `« ${f.label} »`).join(', ')}. Signalez-le a
+      l'administrateur.
+    </div>
+  );
 }
 
 export function Badge({ children, tone = 'neutral' }: { children: ReactNode; tone?: string }) {
@@ -94,11 +126,17 @@ export const observationTone: Record<string, string> = {
   SURSTOCK: 'orange',
 };
 
+/**
+ * D24 : quatre niveaux. PERIME et ROUGE partagent le rouge a titre de securite
+ * (un drapeau inconnu ne doit jamais s'afficher sans couleur), mais PERIME est le
+ * seul code que la regle produit pour un lot perime.
+ */
 export const lotTone: Record<string, string> = {
   VERT: 'green',
+  JAUNE: 'yellow',
   ORANGE: 'orange',
-  ROUGE: 'red',
   PERIME: 'red',
+  ROUGE: 'red',
 };
 
 export interface SearchSelectOption {

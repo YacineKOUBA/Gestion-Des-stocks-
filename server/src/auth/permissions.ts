@@ -106,6 +106,19 @@ const MAGASINIER_PERMISSIONS: Permission[] = [
  * TOP_MANAGEMENT : profil de consultation dedie a la direction generale.
  * Les 9 ecrans demandes, en lecture seule. Aucun ecran de gestion
  * (Referentiel, Utilisateurs, Parametres, Journal d'audit) ni Document (bons).
+ *
+ * `referential:read` lui est accorde malgre l'absence de l'ecran Referentiel dans son
+ * menu, pour la meme raison que pour MAGASINIER (D17), SALES_ADMIN (D19) et
+ * MASTER_DATA (D25) : **six de ses neuf ecrans ont un filtre ou un formulaire qui
+ * sealimentent de listes de reference**. Ces listes sont protegees par le module
+ * /referential, donc sans ce droit elles reviennent en 403 et les deroulants restent
+ * VIDES **sans afficher la moindre erreur** : l'ecran parait fonctionner mais ne peut
+ * plus etre filtre. C'est exactement le defaut signale par le directeur, et il etait
+ * mesure : 14 appels refuses sur 6 ecrans (Article, Mouvement, Inventaire, Pret/
+ * Emprunt, Reservation, Valorisation). La correction porte le profil de 9 a 10 droits.
+ *
+ * Il n'a en revanche NI `referential:manage` (ecran de gestion du referentiel) NI
+ * `referential:write` : la direction generale continue de ne rien ecrire.
  */
 const TOP_MANAGEMENT_PERMISSIONS: Permission[] = [
   'dashboard:read',
@@ -117,6 +130,7 @@ const TOP_MANAGEMENT_PERMISSIONS: Permission[] = [
   'loan:read',
   'reservation:read',
   'valuation:read',
+  'referential:read',
 ];
 
 /**
@@ -154,11 +168,45 @@ const SALES_ADMIN_PERMISSIONS: Permission[] = [
   'reservation:write',
 ];
 
+/**
+ * MASTER_DATA : consultation en lecture seule (D25).
+ *
+ * Les huit ecrans demandes par le directeur : Tableau de bord, Etat de stock,
+ * Articles, Mouvements, Lots & peremptions, Prets/Emprunts, Reservations,
+ * Valorisation. Aucune ecriture, aucun ecran de gestion.
+ *
+ * `referential:read` lui est accorde malgre l'absence de l'ecran Referentiel de son
+ * menu, pour la meme raison que pour MAGASINIER et SALES_ADMIN : ses ecrans ont des
+ * filtres qui sealimentent de listes de reference (Categorie sur Article, Depot sur
+ * Mouvement, Categorie/Famille/Depot sur Valorisation). Ces listes sont protegees par
+ * le module /referential, donc sans ce droit elles reviennent en 403 et les deroulants
+ * restent VIDES sans afficher la moindre erreur : l'ecran parait fonctionner mais ne
+ * peut plus etre filtre. Meme demarche que MAGASINIER, meme raison.
+ *
+ * Il n'a en revanche NI `referential:manage` (ecran de gestion du referentiel) NI
+ * `referential:write`. Aucune ecriture possible.
+ *
+ * Il n'a PAS `inventory:read` (Inventaire), `bon:read` (Document), `user:read`,
+ * `settings:read` ni `audit:read` : ces ecrans ne figuraient pas dans la demande.
+ */
+const MASTER_DATA_PERMISSIONS: Permission[] = [
+  'dashboard:read',
+  'stock:read',
+  'article:read',
+  'movement:read',
+  'lot:read',
+  'loan:read',
+  'reservation:read',
+  'valuation:read',
+  'referential:read',
+];
+
 export const ROLE_PERMISSIONS: Record<RoleCode, readonly Permission[]> = {
   ADMIN: ADMIN_PERMISSIONS,
   MAGASINIER: MAGASINIER_PERMISSIONS,
   TOP_MANAGEMENT: TOP_MANAGEMENT_PERMISSIONS,
   SALES_ADMIN: SALES_ADMIN_PERMISSIONS,
+  MASTER_DATA: MASTER_DATA_PERMISSIONS,
 };
 
 /** Droits effectivement accordes a un role. */

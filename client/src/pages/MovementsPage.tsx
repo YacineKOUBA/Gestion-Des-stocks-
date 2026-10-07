@@ -105,7 +105,7 @@ export function MovementsPage() {
     }
   }
 
-  const depots = useAsync(() => referentialApi.depots(), []);
+  const depots = useAsync(() => referentialApi.depots(), [], { label: 'Dépôts' });
   const movements = useAsync(
     () =>
       movementsApi.list({
@@ -431,10 +431,10 @@ function MovementFormModal({
   onClose: () => void;
   onSaved: (moveType: string, move: Movement) => void;
 }) {
-  const articles = useAsync(() => articlesApi.list(), []);
-  const depots = useAsync(() => referentialApi.depots(), []);
-  const locations = useAsync(() => stockApi.locations(), []);
-  const partners = useAsync(() => referentialApi.partners(), []);
+  const articles = useAsync(() => articlesApi.list(), [], { label: 'Articles' });
+  const depots = useAsync(() => referentialApi.depots(), [], { label: 'Dépôts' });
+  const locations = useAsync(() => stockApi.locations(), [], { label: 'Emplacements' });
+  const partners = useAsync(() => referentialApi.partners(), [], { label: 'Acteurs' });
   // Lots fetches uniquement pour l'article selectionne (le serveur filtre par articleId).
   const [form, setForm] = useState({
     type: 'ENTREE',
@@ -466,6 +466,7 @@ function MovementFormModal({
         ? lotsApi.list({ articleId: Number(form.articleId), includeExhausted: isRetour })
         : Promise.resolve([] as Lot[]),
     [form.articleId, isRetour],
+    { label: 'Lots' },
   );
 
   const articleLots = (lots.data ?? []).filter((l) => String(l.articleId) === form.articleId);

@@ -45,6 +45,30 @@ soit on documente les commandes workspace, soit on ajoute des scripts racine.
 **A verifier selon l'option retenue :** le port, l'adresse d'ecoute, et si l'application
 doit etre accessible depuis une autre machine du reseau (voir 2.1).
 
+### 1.3 - Lancer la recette des droits avant toute demonstration
+
+| | |
+|---|---|
+| **Etat** | `npm test --workspace server` — **ajoute en D28**. |
+| **Ce que ca controle** | L'invariant qui a produit la panne de D27 : *un ecran qu'un profil peut ouvrir doit pouvoir charger toutes les listes dont il depend, filtres et formulaires compris.* Le test lit le code des routes, en deduit le droit exige par chacune, et le compare a la matrice des droits, profil par profil et ecran par ecran. |
+| **Pourquoi ca ne se voit pas a l'ecran** | La panne d'origine ne cassait rien : la page s'affichait, ses tableaux se remplissaient, et **seuls les deroulants restaient vides, sans message**. Aucun parcours manuel ne la trouve de facon fiable — c'est ce qui l'a laissee atteindre la demonstration. |
+| **Ce qu'il ne faut pas faire** | Ne pas contourner le test pour « faire passer » la recette : le code de sortie doit rester 0. |
+| **Comment lire un echec** | Le test nomme le profil, l'ecran, la dependance et le droit manquant. Les deux remedes deja employes : accorder le droit (`D17`, `D19`, `D25`, `D27`) ou conditionner l'appel par `can(...)` dans la page. |
+| **Cas rappeles a chaque execution** | Une dependance reellement refusee mais **arbitree et assumee** est rappelee en bas de sortie pour ne pas finir oubliee : aujourd'hui `/users` dans le formulaire de reservation (D28). |
+| **Contrainte** | Aucune : ni serveur, ni base, ni ecriture. Le test lit les sources du serveur **et** du client, et se lance donc avant meme le premier demarrage. |
+
+### 1.4 - Droits PostgreSQL de l'utilisateur applicatif (bloquant, constate le 07/10/2026)
+
+| | |
+|---|---|
+| **Symptome** | `npm run dev` demarre, `/api/health` repond 200, mais **la page de connexion affiche « Erreur interne »** (`POST /api/auth/login` -> 500). |
+| **Cause** | `server/.env` (charge par `dotenv` au lancement) declare l'utilisateur `gdtrading`. Sur PostgreSQL 16, le schema `public` n'accorde plus `USAGE` a `PUBLIC` : le role existait et pouvait se connecter, mais **n'avait aucun droit** (0 table lisible ; les 31 tables etaient propriete de `postgres`). Chaque requete echouait en `42501 permission denied for schema public`, que le handler d'erreurs classe en 500 generique (« Erreur interne »), sans detail dans la reponse. |
+| **Pourquoi personne ne l'avait vu** | Tous les lancers de la session de preparation passaient par `DATABASE_URL=postgres:...`, qui **ecrase** la valeur du `.env` : la valeur en defaut du fichier n'a donc jamais servi. |
+| **Diagnostic reproductible** | Depuis `server/`, `node -e "require('dotenv/config'); const{PrismaClient}=require('@prisma/client'); new PrismaClient().user.count().then(console.log).catch(console.error)"` **sans** `DATABASE_URL` dans l'environnement : l'erreur `42501` apparait en clair. |
+| **Correctif applique** | `server/scripts/fix-gdtrading-grants.ts` : `GRANT USAGE, CREATE ON SCHEMA public`, transfert de propriete des tables/sequences/vues a `gdtrading`, puis privileges par defaut pour les roles `postgres` et `gdtrading` (les objets futurs restent accessibles). Aucune donnee modifiee. Verification : `USAGE=OUI`, `tables accessibles=31/31`. |
+| **A refaire sur toute base neuve** | Creer le role applicatif, lui donner les droits ci-dessus, puis executer les migrations **avec ce role** : c'est lui qui doit etre proprietaire de son schema, comme en production. |
+| **Regle generale** | Ne jamais faire tourner l'application en superutilisateur : le `.env` de developpement est le modele de la configuration de production. |
+
 ---
 
 ## 1 bis. PIEGE DE DEVELOPPEMENT A CONNAITRE (Vite / Windows)
@@ -218,6 +242,7 @@ Toutes les corrections ont porte sur le code et la documentation.
 | `magasinier` | `magasinier2026` | `MAGASINIER` — 12 droits | Tableau de bord |
 | `direction` | `direction2026` | `TOP_MANAGEMENT` — 9 droits | Tableau de bord |
 | `ventes` | `ventes2026` | `SALES_ADMIN` — 7 droits | **Etat de stock** (D19) |
+| `masterdata` | `masterdata2026` | `MASTER_DATA` — 9 droits, lecture seule (D25) | Tableau de bord |
 
 Les mots de passe sont volontairement identiques et documentes ici : c'est un jeu de
 demonstration, pas un environnement de production. **Ils sont a changer a l'installation

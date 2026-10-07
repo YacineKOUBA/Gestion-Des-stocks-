@@ -37,7 +37,7 @@ export function LoginPage() {
     <div className="login-page">
       <form className="login-card" onSubmit={handleSubmit}>
         <div className="brand brand-large">
-          <span className="brand-mark">GD</span>
+          <img className="brand-logo" src="/logo-gd-alpha.png" alt="GD Trading" />
           <span className="brand-text">
             GD Trading
             <small>Gestion des stocks</small>

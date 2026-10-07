@@ -1,10 +1,8 @@
-# GD TRADING - MODELE DE DONNEES POSTGRESQL - PRISMA (ETAPE 7 - REV 1)
+# GD TRADING - MODELE DE DONNEES POSTGRESQL (ETAPE 7)
 
 **Statut :** EN ATTENTE DE VALIDATION
 **Date :** 18/09/2026
-**Base :** `docs\03_CAHIER_DES_CHARGES.md` (valide) + `docs\05_ARCHITECTURE.md` (REV 1 - Prisma + TypeScript)
-
-Ce document definit le modele de donnees **au format Prisma** (`schema.prisma`). C'est la source de verite : les migrations (`prisma migrate`) generent automatiquement le SQL PostgreSQL.
+**Base :** `docs\03_CAHIER_DES_CHARGES.md` (valide) + `docs\05_ARCHITECTURE.md`
 
 ---
 
@@ -12,9 +10,9 @@ Ce document definit le modele de donnees **au format Prisma** (`schema.prisma`).
 
 | Table | Description | Module |
 |---|---|---|
-| users, roles | Utilisateurs et roles | M11 |
+| users | Utilisateurs (login, mot de passe hache, role) | M11 |
+| roles | ADMIN / MAGASINIER (+ droits) | M11 |
 | categories | EMBALLAGE / MATIERE PREMIERE / EQUIPEMENT / PIECE DE RECHANGE | M1 |
-| code_series | Series de codes par categorie (100/200/300/400xxx) | M1 |
 | families | Familles d'articles | M1 |
 | units | Unites de mesure (KG, UNITE, LITRE, ML, PIECE...) | M1 |
 | packaging | Conditionnements (CARTON, BOBINE, SACHET...) | M1 |
@@ -22,650 +20,383 @@ Ce document definit le modele de donnees **au format Prisma** (`schema.prisma`).
 | partners | Fournisseurs, clients, entites | M1/M6 |
 | depots | Etablissements (ALGER, BLIDA 1, BLIDA 2, CONSTANTINE, EXTERIEUR) | M3 |
 | locations | Emplacements internes (DEPOT 1, DEPOT 2, DEPOT 1&2, EXTERIEUR, FERMENT) | M3 |
-| articles | Fiches articles | M1 |
+| articles | Fiches articles (designation, code, categorie, famille, prix...) | M1 |
 | article_consumption | Consommation mensuelle calculee (par article, mois) | M3 |
 | article_orders | Arrivages / commandes en cours (ENCOURS) | M3 |
+| movements | Journal des mouvements (entree, sortie, transfert, perte, ajustement) | M2 |
+| lots | Lots par article (numero de lot, dates fab/exp) | M4 |
+| inventories | Campagnes d'inventaire | M5 |
+| inventory_lines | Lignes de comptage (theorique / physique / ecart / statut) | M5 |
+| loans | Operations pret / emprunt | M6 |
+| loan_restitutions | Restitutions (PRET, EMPRUNT) liees a une operation | M6 |
+| price_history | Historique des prix unitaires par article | M7 |
+| bons | Bons de sortie / transfert / livraison | M8 |
+| bon_lines | Lignes de bon | M8 |
+| settings | Parametres (seuils 9/21/0,5 / 1,05 / alerte 30j...) | M12 |
+| audit_log | Journal d'audit (qui a fait quoi) | M10 |
+| code_series | Series de codes par categorie (100xxx, 200xxx, 300xxx, 400xxx) | M1 |
 | movement_types | Types normalises (ENTREE, SORTIE, TRANSFERT, PERTE, AJUSTEMENT) | M2 |
-| moves | Journal des mouvements | M2 |
-| lots | Lots par article | M4 |
-| inventories, inventory_lines | Campagnes d'inventaire et lignes de comptage | M5 |
-| loans, loan_restitutions | Prets / emprunts / restitutions | M6 |
-| reservations, reservation_lines | Reservations de stock (blocage FEFO, validation, annulation, expiration) | M13 |
-| price_history | Historique des prix unitaires | M7 |
-| bons, bon_lines | Bons (enregistrement simple V1) | M8 |
-| settings | Parametres (seuils 9/21/0,5 / 1,05 / alerte 30j) | M12 |
-| notification_alert | Alertes pre-caclculees (sous-stock, peremption, inventaire) | M9 |
-| audit_log | Journal d'audit | M10 |
-| enums | voir enums Prisma (type_mouvement, role, statut...) | - |
+| article_lot_flag | Indicateur article "lot-trace" (perissable ou non) | M4 |
+| notification_alert | Alertes gerees (sous-stock, peremption, inventaire en retard) | M9 |
 
 ---
 
-## 2. SCHEMA PRISMA (verbe "moves" pour mouvement)
-
-```prisma
-// ============================================================
-// GD TRADING - schema.prisma (modele de donnees V1)
-// Source de verite. Generer les migrations avec :
-//   npx prisma migrate dev
-// ============================================================
-
-generator client {
-  provider = "prisma-client-js"
-}
-
-datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
-}
-
-// ------------------------------------------------------------
-// ENUMS
-// ------------------------------------------------------------
-
-enum RoleCode {
-  ADMIN
-  MAGASINIER
-  TOP_MANAGEMENT   // D16 : profil « Direction generale », consultation seule
-  SALES_ADMIN      // D19 : profil « Administration des ventes », reservations sans validation
-}
-
-enum PartnerType {
-  FOURNISSEUR
-  CLIENT
-  ENTITE
-  AUTRE
-}
-
-enum ArticleEmploi {
-  PRODUCTION
-  REVENTE_EN_LETAT
-  MIXTE
-}
-
-enum SourceAchat {
-  INTERNATIONAL
-  LOCAL
-  MIXTE
-  NON_DEFINI
-}
-
-enum ArticleStatut {
-  ACTIVE
-  INACTIVE
-}
-
-enum MoveTypeCode {
-  ENTREE
-  SORTIE
-  TRANSFERT
-  PERTE
-  AJUSTEMENT
-}
-
-enum MoveStatus {
-  ACTIF
-  ANNULE
-}
-
-enum InventoryStatus {
-  OUVERTE
-  CLOTUREE
-}
-
-enum InventoryLineStatus {
-  A_COMPTER
-  COMPTE
-  VALIDE
-  REFUSE
-}
-
-enum InventoryDecision {
-  AJUSTEMENT
-  PERTE
-}
-
-enum LoanType {
-  PRET
-  EMPRUNT
-}
-
-enum RestitutionType {
-  RESTITUTION_PRET
-  RESTITUTION_EMPRUNT
-}
-
-enum BonType {
-  SORTIE
-  LIVRAISON
-  TRANSFERT
-}
-
-enum AuditAction {
-  CREATION
-  MODIFICATION
-  SUPPRESSION
-  VALIDATION
-  ANNULATION
-  CONNEXION
-  REFUS
-}
-
-enum AlertLevel {
-  RED
-  ORANGE
-  GREEN
-}
-
-// ------------------------------------------------------------
-// UTILISATEURS ET ROLES (M11)
-// ------------------------------------------------------------
-
-model User {
-  id            Int      @id @default(autoincrement())
-  roleId        Int
-  role          Role     @relation(fields: [roleId], references: [id])
-  login         String   @unique @db.VarChar(50)
-  passwordHash  String   @db.VarChar(255) // bcrypt, jamais en clair
-  displayName   String?  @map("display_name")
-  isActive      Boolean  @default(true) @map("is_active")
-  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz()
-
-  createdAtBy   User?    @relation("UserCreatedBy", fields: [createdBy], references: [id])
-  createdBy     Int?
-  createdUsers  User[]   @relation("UserCreatedBy")
-
-  auditLogs     AuditLog[]
-  movesMade     Move[]   @relation("MoveCreatedBy")
-  movesCanceled Move[]   @relation("MoveCanceledBy")
-
-  @@map("users")
-}
-
-model Role {
-  id     Int      @id @default(autoincrement())
-  code   RoleCode @unique
-  label  String   @db.VarChar(50)
-  users  User[]
-}
-
-// ------------------------------------------------------------
-// REFERENTIELS (M1 / M12)
-// ------------------------------------------------------------
-
-model Category {
-  id         Int         @id @default(autoincrement())
-  code       String      @unique @db.VarChar(30) // EMBALLAGE / MATIERE_PREMIERE / EQUIPEMENT / PIECE_DE_RECHANGE
-  label      String      @db.VarChar(50)
-  sort       Int?
-  articles   Article[]
-  series     CodeSeries?
-}
-
-model CodeSeries {
-  id          Int      @id @default(autoincrement())
-  categoryId  Int      @unique
-  category    Category @relation(fields: [categoryId], references: [id])
-  prefix      String   @db.VarChar(6) // '100','200','300','400'
-  nextValue   Int      @default(1) @map("next_value")
-  digits      Int      @default(6)
-}
-
-model Family {
-  id       Int       @id @default(autoincrement())
-  code     String    @unique @db.VarChar(20)
-  label    String    @db.VarChar(100)
-  isActive Boolean   @default(true) @map("is_active")
-  articles Article[]
-}
-
-model Unit {
-  id      Int     @id @default(autoincrement())
-  code    String  @unique @db.VarChar(10)
-  label   String  @db.VarChar(30)
-  articles Article[]
-  movements Move[]
-}
-
-model Packaging {
-  id      Int     @id @default(autoincrement())
-  label   String  @unique @db.VarChar(50)
-}
-
-model Origin {
-  id     Int     @id @default(autoincrement())
-  code   String  @unique @db.VarChar(5)
-  label  String  @db.VarChar(60)
-  region String? @db.VarChar(60)
-}
-
-model Partner {
-  id       Int         @id @default(autoincrement())
-  name     String      @db.VarChar(150)
-  type     PartnerType
-  isActive Boolean     @default(true) @map("is_active")
-}
-
-model Depot {
-  id        Int       @id @default(autoincrement())
-  code      String    @unique @db.VarChar(20) // ALGER, BLIDA1, BLIDA2, CONSTANTINE, EXTERIEUR
-  label     String    @db.VarChar(50)
-  isActive  Boolean   @default(true) @map("is_active")
-  movements Move[]
-  orders    ArticleOrder[]
-}
-
-model Location {
-  id        Int       @id @default(autoincrement())
-  code      String    @unique @db.VarChar(20) // DEPOT1, DEPOT2, DEPOT12, EXTERIEUR, FERMENT
-  label     String    @db.VarChar(50)
-  isActive  Boolean   @default(true) @map("is_active")
-}
-
-// ------------------------------------------------------------
-// ARTICLES (M1 / M7)
-// ------------------------------------------------------------
-
-model Article {
-  id             Int             @id @default(autoincrement())
-  code           String          @unique @db.VarChar(10) // genere depuis CodeSeries, jamais modifiable (0.7)
-  designation    String          @db.VarChar(200)
-  designation2   String?         @map("designation2") @db.VarChar(200)
-  fabricant      String?         @db.VarChar(100)
-  emploiGd       ArticleEmploi   @default(PRODUCTION) @map("emploi_gd")
-  categoryId     Int
-  category       Category        @relation(fields: [categoryId], references: [id])
-  familyId       Int?
-  family         Family?         @relation(fields: [familyId], references: [id])
-  application    String?         @db.VarChar(150)
-  unitId         Int
-  unit           Unit            @relation(fields: [unitId], references: [id])
-  packagingId    Int?
-  packaging      Packaging?      @relation(fields: [packagingId], references: [id])
-  sourceAchat    SourceAchat?    @map("source_achat")
-  originId       Int?
-  origin         Origin?         @relation(fields: [originId], references: [id])
-  periode        String?         @db.VarChar(20)  // ANNUELLE(360), BIMESTRIELLE(180)...
-  frequence      Int?                            // 360, 180, 90, 30...
-  statut         ArticleStatut   @default(ACTIVE)
-  unitPrice      Decimal?        @map("unit_price") @db.Decimal(14, 4) // saisi manuellement (D7) - REPLI, le prix du lot prime (D11)
-  isLotTracked   Boolean         @default(false) @map("is_lot_tracked") // perissable / lot-trace (0.3)
-
-  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz()
-  updatedAt      DateTime        @updatedAt @map("updated_at") @db.Timestamptz()
-
-  consumptions   ArticleConsumption[]
-  orders         ArticleOrder[]
-  priceHistory   PriceHistory[]
-  lots           Lot[]
-  movements      Move[]
-  minventoryLines InventoryLine[]
-  loans          Loan[]
-
-  @@index([familyId])
-  @@index([categoryId])
-  @@map("articles")
-}
-
-// Consommation mensuelle (D3) : calculee depuis les sorties, par mois
-model ArticleConsumption {
-  id        Int            @id @default(autoincrement())
-  articleId Int
-  article   Article        @relation(fields: [articleId], references: [id])
-  year      Int
-  month     Int
-  quantity  Decimal        @default(0) @db.Decimal(14, 3)
-
-  @@unique([articleId, year, month])
-  @@map("article_consumption")
-}
-
-// Arrivages / commandes en cours (ENCOURS -> stock virtuel)
-model ArticleOrder {
-  id           Int       @id @default(autoincrement())
-  articleId    Int
-  article      Article   @relation(fields: [articleId], references: [id])
-  quantity     Decimal   @db.Decimal(14, 3)
-  expectedDate DateTime  @map("expected_date") @db.Date
-  supplierId   Int?
-  supplier     Partner?  @relation(fields: [supplierId], references: [id])
-  arrived      Boolean   @default(false)
-  depotId      Int?
-  depot        Depot?    @relation(fields: [depotId], references: [id])
-  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz()
-
-  @@map("article_orders")
-}
-
-// Historique des prix (D7 - prix modifiable, historique conserve)
-model PriceHistory {
-  id        Int      @id @default(autoincrement())
-  articleId Int
-  article   Article  @relation(fields: [articleId], references: [id])
-  unitPrice Decimal  @map("unit_price") @db.Decimal(14, 4)
-  changedBy Int?
-  changedAt DateTime @default(now()) @map("changed_at") @db.Timestamptz()
-
-  @@map("price_history")
-}
-
-// ------------------------------------------------------------
-// LOTS (M4) ET MOUVEMENTS (M2)
-// ------------------------------------------------------------
-
-model Lot {
-  id          Int       @id @default(autoincrement())
-  articleId   Int
-  article     Article   @relation(fields: [articleId], references: [id])
-  lotNumber   String    @map("lot_number") @db.VarChar(50)
-  fabricDate  DateTime? @map("fabric_date") @db.Date
-  expiryDate  DateTime? @map("expiry_date") @db.Date
-  unitPrice   Decimal?  @map("unit_price") @db.Decimal(14, 4) // prix du lot : prime sur le prix de l'article (D11)
-  observation String?   @db.Text
-
-  movements      Move[]
-  inventoryLines InventoryLine[]
-  bonLines       BonLine[]
-
-  @@unique([articleId, lotNumber])
-  @@index([expiryDate])
-  @@map("lots")
-}
-
-model MoveType {
-  id    Int          @id @default(autoincrement())
-  code  MoveTypeCode @unique
-  label String       @db.VarChar(30)
-  sens  Int          // +1 / -1
-}
-
-// JOURNAL DES MOUVEMENTS
-model Move {
-  id              BigInt      @id @default(autoincrement()) @db.Bigint
-  typeId          Int
-  type            MoveType    @relation(fields: [typeId], references: [id])
-  articleId       Int
-  article         Article     @relation(fields: [articleId], references: [id])
-  lotId           Int?
-  lot             Lot?        @relation(fields: [lotId], references: [id])
-  quantity        Decimal     @db.Decimal(14, 3)
-  sens            Int // +1 / -1, calcule d'apres le type
-  depotId         Int
-  depot           Depot       @relation(fields: [depotId], references: [id])
-  locationId      Int?
-  location        Location?   @relation(fields: [locationId], references: [id])
-  depotDestId     Int?        @map("depot_dest_id") // TRANSFERT
-  locationDestId  Int?        @map("location_dest_id")
-  partnerId       Int?
-  partner         Partner?    @relation(fields: [partnerId], references: [id])
-  docNumber       String?     @map("doc_number") @db.VarChar(50)
-  unitPrice       Decimal?    @map("unit_price") @db.Decimal(14, 4)
-  movementDate    DateTime    @map("movement_date") @db.Date
-  observation     String?     @db.VarChar(255)
-  linkMoveId      BigInt?     @map("link_move_id") // lien sortie <-> entree d'un transfert
-  linkMove        Move?       @relation("MoveLink", fields: [linkMoveId], references: [id])
-  linkedMoves     Move[]      @relation("MoveLink")
-  remediation     String?     @db.VarChar(20) // 'MIGRATION' pour l'historique Excel
-  inventoryId     Int?
-  inventory       Inventory?  @relation(fields: [inventoryId], references: [id])
-  status          MoveStatus  @default(ACTIF)
-  canceledBy      Int?
-  canceler        User?       @relation("MoveCanceledBy", fields: [canceledBy], references: [id])
-  canceledAt      DateTime?   @map("canceled_at") @db.Timestamptz()
-  createdBy       Int
-  creator         User?       @relation("MoveCreatedBy", fields: [createdBy], references: [id])
-  createdAt       DateTime    @default(now()) @map("created_at") @db.Timestamptz()
-
-  loan            Loan?
-  restitutions    LoanRestitution[]
-
-  @@index([articleId])
-  @@index([lotId])
-  @@index([depotId])
-  @@index([movementDate])
-  @@map("moves")
-}
-
-// ------------------------------------------------------------
-// INVENTAIRE (M5 / C1)
-// ------------------------------------------------------------
-
-model Inventory {
-  id        BigInt          @id @default(autoincrement()) @db.Bigint
-  code      String          @unique @db.VarChar(20) // INV-2026-09-001
-  title     String?         @db.VarChar(150)
-  depotId   Int?
-  depot     Depot?          @relation(fields: [depotId], references: [id])
-  openedAt  DateTime        @default(now()) @map("opened_at") @db.Timestamptz()
-  openedBy  Int
-  closedAt  DateTime?       @map("closed_at") @db.Timestamptz()
-  closedBy  Int?
-  status    InventoryStatus @default(OUVERTE)
-
-  lines       InventoryLine[]
-  movements   Move[]
-
-  @@map("inventories")
-}
-
-model InventoryLine {
-  id             BigInt               @id @default(autoincrement()) @db.Bigint
-  inventoryId    BigInt
-  inventory      Inventory            @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
-  articleId      Int
-  article        Article              @relation(fields: [articleId], references: [id])
-  lotId          Int?
-  lot            Lot?                 @relation(fields: [lotId], references: [id])
-  depotId        Int?
-  locationId     Int?
-  qtyTheoretical Decimal              @map("qty_theoretical") @db.Decimal(14, 3)
-  qtyCounted     Decimal?             @map("qty_counted") @db.Decimal(14, 3)
-  variance       Decimal?             @db.Decimal(14, 3) // qty_counted - qty_theoretical
-  status         InventoryLineStatus  @default(A_COMPTER)
-  decision       InventoryDecision?
-  lossReason     String?              @map("loss_reason") @db.VarChar(150)
-  movementId     BigInt?
-  countedBy      Int?
-  countedAt      DateTime?            @map("counted_at") @db.Timestamptz()
-  validatedBy    Int?
-  validatedAt    DateTime?            @map("validated_at") @db.Timestamptz()
-
-  @@unique([inventoryId, articleId, lotId, locationId])
-  @@map("inventory_lines")
-}
-
-// ------------------------------------------------------------
-// PRETS / EMPRUNTS / RESTITUTIONS (M6)
-// ------------------------------------------------------------
-
-model Loan {
-  id          BigInt      @id @default(autoincrement()) @db.Bigint
-  type        LoanType
-  partnerId   Int
-  partner     Partner     @relation(fields: [partnerId], references: [id])
-  articleId   Int
-  article     Article     @relation(fields: [articleId], references: [id])
-  quantity    Decimal     @db.Decimal(14, 3)
-  loanDate    DateTime    @map("loan_date") @db.Date
-  observation String?     @db.VarChar(255)
-  movementId  BigInt?     @unique // mouvement de stock lie (0.1 -> sortie / entree)
-  status      String      @default("OUVERT") // OUVERT / CLOTURE
-  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz()
-
-  restitutions LoanRestitution[]
-
-  @@map("loans")
-}
-
-model LoanRestitution {
-  id          BigInt          @id @default(autoincrement()) @db.Bigint
-  loanId      BigInt
-  loan        Loan            @relation(fields: [loanId], references: [id])
-  type        RestitutionType // RESTITUTION_PRET / RESTITUTION_EMPRUNT
-  quantity    Decimal         @db.Decimal(14, 3)
-  restDate    DateTime        @map("rest_date") @db.Date
-  movementId  BigInt?         @unique // mouvement de stock lie (reinintegration / retrait)
-  createdAt   DateTime        @default(now()) @map("created_at") @db.Timestamptz()
-
-  @@map("loan_restitutions")
-}
-
-// ------------------------------------------------------------
-// RESERVATIONS DE STOCK (M13 - blocage FEFO, validation / annulation / expiration)
-// Le blocage est porte par des mouvements de type RESERVATION (sens -1) rattaches a
-// la reservation via moves.reservation_id. A la validation, ces mouvements passent en
-// SORTIE ; a l'annulation ou a l'expiration, ils passent en ANNULE, donc le stock est
-// rendu. Statuts : ACTIF / REALISE / ANNULE / EXPIRE.
-// ------------------------------------------------------------
-
-enum ReservationStatus {
-  ACTIF
-  REALISE
-  ANNULE
-  EXPIRE
-}
-
-model Reservation {
-  id          BigInt            @id @default(autoincrement()) @db.BigInt
-  ref         String            @unique @db.VarChar(30) // RSV-2026-0001
-  partnerId   Int
-  partner     Partner           @relation(fields: [partnerId], references: [id])
-  staffLabel String            @map("staff_label") @db.VarChar(100) // saisie libre
-  staffId     Int?
-  staff       User?             @relation("ReservationStaff", fields: [staffId], references: [id])
-  startDate   DateTime          @map("start_date") @db.Date
-  endDate     DateTime          @map("end_date") @db.Date
-  status      ReservationStatus @default(ACTIF)
-  observation String?           @db.VarChar(255)
-  createdBy   Int
-  creator     User?             @relation("ReservationCreatedBy", fields: [createdBy], references: [id])
-  createdAt   DateTime          @default(now()) @map("created_at") @db.Timestamptz()
-  closedBy    Int?
-  closer      User?             @relation("ReservationClosedBy", fields: [closedBy], references: [id])
-  closedAt    DateTime?         @map("closed_at") @db.Timestamptz()
-  closeReason String?           @map("close_reason") @db.VarChar(20) // VALIDEE / MANUEL / EXPIRE
-
-  lines ReservationLine[]
-  moves Move[]
-
-  @@index([status])
-  @@index([endDate])
-  @@index([partnerId])
-  @@map("reservations")
-}
-
-model ReservationLine {
-  id            BigInt      @id @default(autoincrement()) @db.BigInt
-  reservationId BigInt
-  reservation   Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
-  articleId     Int
-  article       Article     @relation(fields: [articleId], references: [id])
-  quantity      Decimal     @db.Decimal(14, 3)
-
-  @@index([articleId])
-  @@map("reservation_lines")
-}
-
-// ------------------------------------------------------------
-// BONS (M8 - V1 : enregistrement simple, sans impression conforme - A4)
-// ------------------------------------------------------------
-
-model Bon {
-  id          BigInt  @id @default(autoincrement()) @db.Bigint
-  ref         String  @unique @db.VarChar(20) // BS-2026-0001
-  type        BonType
-  depotId     Int?
-  depot       Depot?  @relation(fields: [depotId], references: [id])
-  depotDestId Int?
-  partnerId   Int?
-  partner     Partner? @relation(fields: [partnerId], references: [id])
-  bonDate     DateTime @map("bon_date") @db.Date
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz()
-
-  lines BonLine[]
-
-  @@map("bons")
-}
-
-model BonLine {
-  id          BigInt  @id @default(autoincrement()) @db.Bigint
-  bonId       BigInt
-  bon         Bon     @relation(fields: [bonId], references: [id], onDelete: Cascade)
-  articleId   Int
-  article     Article @relation(fields: [articleId], references: [id])
-  lotId       Int?
-  lot         Lot?    @relation(fields: [lotId], references: [id])
-  quantity    Decimal @db.Decimal(14, 3)
-  observation String? @db.VarChar(255)
-
-  @@map("bon_lines")
-}
-
-// ------------------------------------------------------------
-// PARAMETRES (M12) / ALERTES (M9) / AUDIT (M10 / C4)
-// ------------------------------------------------------------
-
-model Setting {
-  id    Int     @id @default(autoincrement())
-  code  String  @unique @db.VarChar(40)
-  value String  @db.VarChar(50)
-  label String? @db.VarChar(100)
-
-  @@map("settings")
-}
-
-model NotificationAlert {
-  id        BigInt     @id @default(autoincrement()) @db.Bigint
-  type      String     @db.VarChar(30) // SOUS_STOCK / SURSTOCK / PEREMPTION / INVENTAIRE_RETARD / PRET_NON_RESTITUE
-  articleId Int?
-  lotId     Int?
-  message   String?    @db.VarChar(255)
-  level     AlertLevel
-  createdAt DateTime   @default(now()) @map("created_at") @db.Timestamptz()
-  resolved  Boolean    @default(false)
-
-  @@map("notification_alert")
-}
-
-model AuditLog {
-  id        BigInt      @id @default(autoincrement()) @db.Bigint
-  userId    Int?
-  user      User?       @relation(fields: [userId], references: [id])
-  action    AuditAction
-  entity    String      @db.VarChar(50)
-  entityId  String?     @map("entity_id")
-  changes   Json?
-  createdAt DateTime    @default(now()) @map("created_at") @db.Timestamptz()
-
-  @@index([entity, entityId])
-  @@index([userId])
-  @@map("audit_log")
-}
+## 2. SCHEMA DETAILLE (DDL simplifie)
+
+> Note : ceci est une vue simplifiee du modele. Le script executable (server/db/schema.sql) ordonnera les CREATE TABLE selon les dependances (ex. `inventories` cree avant `movements`, contraintes FK ajoutees par ALTER TABLE apres creation de toutes les tables).
+
+### 2.1 Utilisateurs et roles
+
+```sql
+CREATE TABLE roles (
+    id          SERIAL PRIMARY KEY,
+    code        VARCHAR(20) UNIQUE NOT NULL,   -- 'ADMIN' | 'MAGASINIER'
+    label       VARCHAR(50) NOT NULL
+);
+
+CREATE TABLE users (
+    id              SERIAL PRIMARY KEY,
+    role_id         INTEGER NOT NULL REFERENCES roles(id),
+    login           VARCHAR(50) UNIQUE NOT NULL,
+    password_hash   VARCHAR(255) NOT NULL,     -- bcrypt
+    display_name    VARCHAR(100),
+    is_active       BOOLEAN NOT NULL DEFAULT TRUE,
+    created_by      INTEGER REFERENCES users(id),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+### 2.2 Referentiels
+
+```sql
+CREATE TABLE categories (
+    id    SERIAL PRIMARY KEY,
+    code  VARCHAR(20) UNIQUE NOT NULL,   -- EMBALLAGE / MATIERE_PREMIERE / EQUIPEMENT / PIECE_DE_RECHANGE
+    label VARCHAR(50) NOT NULL,
+    sort  INTEGER
+);
+
+CREATE TABLE code_series (
+    id            SERIAL PRIMARY KEY,
+    category_id   INTEGER UNIQUE NOT NULL REFERENCES categories(id),
+    prefix        VARCHAR(6) NOT NULL,    -- '100', '200', '300', '400'
+    next_value    INTEGER NOT NULL DEFAULT 1,  -- prochain n° disponible
+    digits        INTEGER NOT NULL DEFAULT 6
+);
+
+CREATE TABLE families  (id SERIAL PRIMARY KEY, code VARCHAR(20) UNIQUE NOT NULL, label VARCHAR(100) NOT NULL, is_active BOOLEAN DEFAULT TRUE);
+CREATE TABLE units     (id SERIAL PRIMARY KEY, code VARCHAR(10) UNIQUE NOT NULL, label VARCHAR(30) NOT NULL);
+CREATE TABLE packaging (id SERIAL PRIMARY KEY, label VARCHAR(50) UNIQUE NOT NULL);
+
+CREATE TABLE origins (
+    id     SERIAL PRIMARY KEY,
+    code   VARCHAR(5) UNIQUE NOT NULL,   -- ex. FRA, ESP, MAR...
+    label  VARCHAR(60) NOT NULL,
+    region VARCHAR(60)                   -- continent / zone
+);
+
+CREATE TABLE partners (
+    id          SERIAL PRIMARY KEY,
+    name        VARCHAR(150) NOT NULL,
+    type        VARCHAR(10) NOT NULL,    -- 'FOURNISSEUR' | 'CLIENT' | 'ENTITE' | 'AUTRE'
+    is_active   BOOLEAN DEFAULT TRUE
+);
+
+CREATE TABLE depots (
+    id       SERIAL PRIMARY KEY,
+    code     VARCHAR(20) UNIQUE NOT NULL,  -- ALGER, BLIDA1, BLIDA2...
+    label    VARCHAR(50) NOT NULL,
+    is_active BOOLEAN DEFAULT TRUE
+);
+
+CREATE TABLE locations (
+    id       SERIAL PRIMARY KEY,
+    code     VARCHAR(20) UNIQUE NOT NULL,  -- DEPOT1, DEPOT2, DEPOT12, EXTERIEUR, FERMENT
+    label    VARCHAR(50) NOT NULL,
+    is_active BOOLEAN DEFAULT TRUE
+);
+```
+
+### 2.3 Articles
+
+```sql
+CREATE TABLE articles (
+    id            SERIAL PRIMARY KEY,
+    code          VARCHAR(10) UNIQUE NOT NULL,       -- 100001...
+    designation   VARCHAR(200) NOT NULL,             -- nom de reference
+    designation2  VARCHAR(200),                      -- code additif E300...
+    fabricant     VARCHAR(100),
+    emploi_gd     VARCHAR(20) NOT NULL DEFAULT 'PRODUCTION',  -- PRODUCTION / REVENTE_EN_LETAT / MIXTE
+    category_id   INTEGER NOT NULL REFERENCES categories(id),
+    family_id     INTEGER REFERENCES families(id),
+    application   VARCHAR(150),                      -- BOISSONS-CONFITURE-COSMETIQUE-PHARMA
+    unit_id       INTEGER NOT NULL REFERENCES units(id),
+    packaging_id  INTEGER REFERENCES packaging(id),
+    source_achat  VARCHAR(20),                       -- INTERNATIONAL / LOCAL / MIXTE / NON_DEFINI
+    origin_id     INTEGER REFERENCES origins(id),
+    periode       VARCHAR(20),                       -- ANNUELLE(360), BIMESTRIELLE(180)...
+    frequence     INTEGER,                           -- jours (360, 180, 90, 30...)
+    statut        VARCHAR(10) NOT NULL DEFAULT 'ACTIVE',  -- ACTIVE / INACTIVE
+    unit_price    NUMERIC(14,4),                     -- prix saisi manuellement (D7)
+    is_lot_tracked BOOLEAN NOT NULL DEFAULT FALSE,   -- article "lot-trace" / perissable (0.3)
+    created_at    TIMESTAMPTZ DEFAULT now(),
+    updated_at    TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX idx_articles_family ON articles(family_id);
+CREATE INDEX idx_articles_category ON articles(category_id);
+
+CREATE TABLE article_consumption (
+    id          SERIAL PRIMARY KEY,
+    article_id  INTEGER NOT NULL REFERENCES articles(id),
+    year        INTEGER NOT NULL,
+    month       INTEGER NOT NULL,      -- 1..12
+    quantity    NUMERIC(14,3) NOT NULL DEFAULT 0,
+    UNIQUE(article_id, year, month)    -- une ligne par article et par mois
+);
+
+CREATE TABLE article_orders (
+    id              SERIAL PRIMARY KEY,
+    article_id      INTEGER NOT NULL REFERENCES articles(id),
+    quantity        NUMERIC(14,3) NOT NULL,
+    expected_date   DATE NOT NULL,     -- date d'arrivee prevue
+    supplier_id     INTEGER REFERENCES partners(id),
+    arrived         BOOLEAN NOT NULL DEFAULT FALSE,
+    created_by      INTEGER REFERENCES users(id),
+    created_at      TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE price_history (
+    id           SERIAL PRIMARY KEY,
+    article_id   INTEGER NOT NULL REFERENCES articles(id),
+    unit_price   NUMERIC(14,4) NOT NULL,
+    changed_by   INTEGER REFERENCES users(id),
+    changed_at   TIMESTAMPTZ DEFAULT now()
+);
+```
+
+### 2.4 Mouvements et lots
+
+```sql
+CREATE TABLE movement_types (
+    id     SERIAL PRIMARY KEY,
+    code   VARCHAR(15) UNIQUE NOT NULL,  -- ENTREE / SORTIE / TRANSFERT / PERTE / AJUSTEMENT
+    label  VARCHAR(30) NOT NULL,
+    sens   SMALLINT NOT NULL             -- +1 / -1
+);
+
+CREATE TABLE lots (
+    id            SERIAL PRIMARY KEY,
+    article_id    INTEGER NOT NULL REFERENCES articles(id),
+    lot_number    VARCHAR(50) NOT NULL,
+    fabric_date   DATE,
+    expiry_date   DATE,
+    UNIQUE(article_id, lot_number)
+);
+CREATE INDEX idx_lots_expiry ON lots(expiry_date);
+
+CREATE TABLE movements (
+    id                  BIGSERIAL PRIMARY KEY,
+    type_id             INTEGER NOT NULL REFERENCES movement_types(id),
+    article_id          INTEGER NOT NULL REFERENCES articles(id),
+    lot_id              INTEGER REFERENCES lots(id),
+    quantity            NUMERIC(14,3) NOT NULL CHECK (quantity > 0),
+    sens                SMALLINT NOT NULL CHECK (sens IN (-1, 1)),
+    depot_id            INTEGER NOT NULL REFERENCES depots(id),
+    location_id         INTEGER REFERENCES locations(id),
+    depot_dest_id       INTEGER REFERENCES depots(id),      -- TRANSFERT
+    location_dest_id    INTEGER REFERENCES locations(id),   -- TRANSFERT
+    partner_id          INTEGER REFERENCES partners(id),
+    doc_number          VARCHAR(50),                         -- livraison / facture / bon
+    unit_price          NUMERIC(14,4),
+    movement_date       DATE NOT NULL,
+    observation         VARCHAR(255),
+    link_movement_id    BIGINT REFERENCES movements(id),     -- lien sortie<->entree d'un transfert
+    remediation         VARCHAR(20),                         -- 'INVENTAIRE' si origine inventaire
+    inventory_id        INTEGER REFERENCES inventories(id),
+    status              VARCHAR(15) NOT NULL DEFAULT 'ACTIF', -- ACTIF / ANNULE
+    canceled_by         INTEGER REFERENCES users(id),
+    canceled_at         TIMESTAMPTZ,
+    created_by          INTEGER NOT NULL REFERENCES users(id),
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_movements_article ON movements(article_id);
+CREATE INDEX idx_movements_depot ON movements(depot_id);
+CREATE INDEX idx_movements_date ON movements(movement_date);
+CREATE INDEX idx_movements_lot ON movements(lot_id);
+```
+
+**Stock disponible** : jamais stocke. Toujours calcule :
+```sql
+SELECT m.article_id, m.lot_id, m.depot_id, m.location_id,
+       SUM(m.sens * m.quantity) AS stock
+FROM movements m
+WHERE m.status = 'ACTIF'
+GROUP BY 1,2,3,4;
+```
+
+**Blocage stock negatif** (decision 0.4) : verifie dans une transaction avant insertion :
+```sql
+SELECT COALESCE(SUM(sens * quantity),0) FROM movements
+WHERE article_id=$art AND lot_id=$lot AND depot_id=$dep AND location_id=$loc AND status='ACTIF';
+```
+
+### 2.5 Inventaire (M5)
+
+```sql
+CREATE TABLE inventories (
+    id              SERIAL PRIMARY KEY,
+    code            VARCHAR(20) UNIQUE NOT NULL,  -- INV2026-09-001
+    title           VARCHAR(150),
+    depot_id        INTEGER REFERENCES depots(id),      -- NULL = tous depots
+    location_id     INTEGER REFERENCES locations(id),
+    opened_at       TIMESTAMPTZ DEFAULT now(),
+    opened_by       INTEGER REFERENCES users(id),
+    closed_at       TIMESTAMPTZ,
+    closed_by       INTEGER REFERENCES users(id),
+    status          VARCHAR(15) NOT NULL DEFAULT 'OUVERTE'  -- OUVERTE / CLOTUREE
+);
+
+CREATE TABLE inventory_lines (
+    id              BIGSERIAL PRIMARY KEY,
+    inventory_id    INTEGER NOT NULL REFERENCES inventories(id) ON DELETE CASCADE,
+    article_id      INTEGER NOT NULL REFERENCES articles(id),
+    lot_id          INTEGER REFERENCES lots(id),
+    depot_id        INTEGER REFERENCES depots(id),
+    location_id     INTEGER REFERENCES locations(id),
+    qty_theoretical NUMERIC(14,3) NOT NULL,   -- calculee au moment de l'ouverture
+    qty_counted     NUMERIC(14,3),            -- saisie magasinier
+    variance        NUMERIC(14,3),            -- qty_counted - qty_theoretical
+    status          VARCHAR(15) DEFAULT 'A_COMPTER',  -- A_COMPTER / COMPTE / VALIDE / REFUSE
+    decision        VARCHAR(15),              -- 'AJUSTEMENT' | 'PERTE'
+    loss_reason     VARCHAR(150),             -- motif obligatoire si PERTE (casse, vol...)
+    movement_id     BIGINT REFERENCES movements(id),   -- mouvement genere a la validation
+    counted_by      INTEGER REFERENCES users(id),
+    counted_at      TIMESTAMPTZ,
+    validated_by    INTEGER REFERENCES users(id),
+    validated_at    TIMESTAMPTZ,
+    UNIQUE(inventory_id, article_id, lot_id, location_id)
+);
+```
+
+### 2.6 Prets / emprunts / restitutions (M6, correction RESTITUTION PRET / EMPRUNT)
+
+```sql
+CREATE TABLE loans (
+    id            BIGSERIAL PRIMARY KEY,
+    type          VARCHAR(10) NOT NULL,        -- 'PRET' | 'EMPRUNT'
+    partner_id    INTEGER NOT NULL REFERENCES partners(id),   -- client / beneficiare
+    article_id    INTEGER NOT NULL REFERENCES articles(id),
+    quantity      NUMERIC(14,3) NOT NULL CHECK (quantity > 0),
+    unit_id       INTEGER REFERENCES units(id),
+    loan_date     DATE NOT NULL,
+    observation   VARCHAR(255),                -- ex. A RESTITUER (ECHANGE), DEPOTAGE
+    movement_id   BIGINT REFERENCES movements(id),  -- mouvement de stock lie (0.1 -> (a))
+    status        VARCHAR(15) DEFAULT 'OUVERT',    -- OUVERT / CLOTURE
+    created_by    INTEGER REFERENCES users(id),    
+    created_at    TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE loan_restitutions (
+    id          BIGSERIAL PRIMARY KEY,
+    loan_id     BIGINT NOT NULL REFERENCES loans(id),
+    type        VARCHAR(20) NOT NULL,     -- 'RESTITUTION_PRET' | 'RESTITUTION_EMPRUNT'
+    quantity    NUMERIC(14,3) NOT NULL CHECK (quantity > 0),
+    rest_date   DATE NOT NULL,
+    movement_id BIGINT REFERENCES movements(id),   -- mouvement de stock lie
+    created_by  INTEGER REFERENCES users(id),
+    created_at  TIMESTAMPTZ DEFAULT now()
+);
+
+-- Solde par operation : SUM(loans.quantity) - SUM(restitutions.quantity) pour un loan donne
+```
+
+### 2.7 Bons (M8)
+
+```sql
+CREATE TABLE bons (
+    id              BIGSERIAL PRIMARY KEY,
+    ref             VARCHAR(20) UNIQUE NOT NULL,   -- BS-2026-0001
+    type            VARCHAR(15) NOT NULL,          -- SORTIE / LIVRAISON / TRANSFERT
+    depot_id        INTEGER REFERENCES depots(id),
+    depot_dest_id   INTEGER REFERENCES depots(id),
+    partner_id      INTEGER REFERENCES partners(id),
+    bon_date        DATE NOT NULL,
+    created_by      INTEGER REFERENCES users(id),
+    created_at      TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE bon_lines (
+    id          BIGSERIAL PRIMARY KEY,
+    bon_id      BIGINT NOT NULL REFERENCES bons(id) ON DELETE CASCADE,
+    article_id  INTEGER NOT NULL REFERENCES articles(id),
+    lot_id      INTEGER REFERENCES lots(id),
+    quantity    NUMERIC(14,3) NOT NULL,
+    unit_id     INTEGER REFERENCES units(id),
+    observation VARCHAR(255)
+);
+```
+
+### 2.8 Parametres et audit (M12, C4)
+
+```sql
+CREATE TABLE settings (
+    id          SERIAL PRIMARY KEY,
+    code        VARCHAR(40) UNIQUE NOT NULL,   -- JOURS_SECURITE, JOURS_MIN, COEF_MAXI, COEF_ALERTE, ALERTE_PEREMPTION_JOURS, ...
+    value       VARCHAR(50) NOT NULL,
+    label       VARCHAR(100)
+);
+-- Valeurs initiales : 9 / 21 / 0,5 / 1,05 / 30
+
+CREATE TABLE audit_log (
+    id          BIGSERIAL PRIMARY KEY,
+    user_id     INTEGER REFERENCES users(id),
+    action      VARCHAR(20) NOT NULL,   -- CREATION / MODIFICATION / SUPPRESSION / VALIDATION / ANNULATION / CONNEXION / REFUS
+    entity      VARCHAR(50) NOT NULL,   -- article, movement, inventory, loan, param, user...
+    entity_id   VARCHAR(50),
+    changes     JSONB,                  -- avant / apres
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_audit_entity ON audit_log(entity, entity_id);
+CREATE INDEX idx_audit_user ON audit_log(user_id);
+CREATE INDEX idx_audit_date ON audit_log(created_at);
+
+-- notification_alert : pre-calcul des alertes (sous-stock, peremption, inventaire en retard)
+CREATE TABLE notification_alert (
+    id          BIGSERIAL PRIMARY KEY,
+    type        VARCHAR(30) NOT NULL,   -- SOUS_STOCK / SURSTOCK / PEREMPTION / INVENTAIRE_RETARD / PRET_NON_RESTITUE
+    article_id  INTEGER REFERENCES articles(id),
+    lot_id      INTEGER REFERENCES lots(id),
+    message     VARCHAR(255),
+    level       VARCHAR(10),            -- RED / ORANGE / GREEN
+    created_at  TIMESTAMPTZ DEFAULT now(),
+    resolved    BOOLEAN DEFAULT FALSE
+);
 ```
 
 ---
 
-## 3. REGLES D'INTEGRITE TRANSVERSES (implementees dans les services metier)
+## 3. REGLES D'INTEGRITE TRANSVERSES
 
-1. **Stock jamais negatif** : verifie dans une transaction Prisma pour SORTIE / PERTE (0.4) - `sum(sens * quantity)` sur les mouvements ACTIFS.
-2. **TRANSFERT** : 1 saisie -> 2 mouvements lies (linkMoveId), depot source != destination.
-3. **Annulation** : statut ANNULE + audit (M10), jamais de suppression physique.
-4. **Fusion des 2 journaux Excel (D1)** : mouvements importes avec leurs dates d'origine et origine 'MIGRATION'.
-5. **Lot** : obligatoire pour articles `isLotTracked = true` (0.3) ; doublon (article, lotNumber) interdit.
-6. **Code article** : genere depuis CodeSeries selon la categorie (100/200/300/400), jamais modifiable (0.7). Un article supprime une serie ? non - le compteur avance seul.
-7. **Consommation mensuelle** (D3) : calculee depuis les SORTIES, recalculable a la cloture de chaque mois.
-8. **Inventaire** : ecart valide -> AJUSTEMENT ou PERTE (motif obligatoire pour PERTE), origine inventaire tracee ; campagne CLOTUREE non modifiable.
-9. **Valorisation** (D7, D11) : le prix est porte par le **lot** (`lots.unit_price`, saisi a la creation du lot et suivi toute sa vie) ; le prix de la fiche article (`articles.unit_price`, historique dans `price_history`) n'est qu'un **repli** pour les lots sans prix propre. VALEUR LOT = quantite x prix applique ; au niveau article, PRIX MOYEN = SOMME(prix applique x quantite) / SOMME(quantite).
-10. **Bons V1** (A4) : enregistrement seul, sans generation PDF conforme.
+1. **Stock jamais negatif** : blocage en transaction pour SORTIE/PERTE (0.4).
+2. **TRANSFERT** : 1 saisie -> 2 mouvements lies (link_movement_id), depot source != depot destination.
+3. **Annulation** : statut 'ANNULE' + audit (M10) ; pas de suppression physique.
+4. **Fusion des 2 journaux Excel (D1)** : les mouvements importes gardent leur date d'origine et sont tages origine 'MIGRATION'.
+5. **Lot** : obligatoire pour articles `is_lot_tracked = TRUE` (0.3) ; doublon (article, lot_number) interdit.
+6. **Code article** : genere depuis code_series selon la categorie (100/200/300/400), jamais modifiable (0.7).
+7. **Consommation mensuelle** : recalculable depuis les SORTIES (D3) a la cloture de chaque mois.
+8. **Inventaire** : ecart valide -> AJUSTEMENT ou PERTE (motif obligatoire pour PERTE), origine inventaire tracée ; campagne cloturee non modifiable.
+9. **Valorisation** : prix unitaire (D7) + historique prix ; VALEUR = stock x prix, filtrable par categorie/famille/depot.
+10. **Bons PDF** : numerotation auto (M8).
 
 ---
 
-## 4. PLAN DE MIGRATION DES DONNEES EXCEL (scripts Python)
+## 4. PLAN DE MIGRATION DES DONNEES EXCEL (script Python)
 
-1. Lire `PRODUIT` / `BD` -> articles (completer les lignes manquantes depuis BD).
-2. Creer les referentiels : familles, categories (4), unites, conditionnements, origines, depots, emplacements.
-3. Creer les CodeSeries (100/200/300/400) et reattribuer les codes existants des articles.
-4. Importer `JOURNAL E-S` + `JOURNAL E-S (2)` -> Move (fusion D1), sens = +1/-1, status ACTIF, remediation 'MIGRATION'.
+1. Parcourir `PRODUIT` / `BD` -> articles (les lignes manquantes en INFO sont completees depuis BD).
+2. Associer familles / categories / unites / origines / depots dans les referentiels.
+3. Creer les categories et series de codes (100xxx = EMBALLAGE, 200xxx = MP, 300xxx = PIECE DE RECHANGE, 400xxx = EQUIPEMENT) et reattribuer les codes existants des articles.
+4. Importer `JOURNAL E-S` + `JOURNAL E-S (2)` -> mouvements (fusion, D1), sens calcules, status ACTIF, origine MIGRATION.
 5. Importer les lots de `GESTION LOTS` / `ETAT STOCK` (lot, date fab, date exp).
-6. Importer de `BD` : parametres periode/frequence, acteurs, entites.
-7. Importer `SITUATION` / `PRET-RESTITUTION-EMPRUNT` -> operations pret/emprunt en cours (OUVERT).
-8. Non migre en V1 : CONS. PRODUIT / RUBAN ADHESIF (V2), personnel/equipement (hors perimetre).
+6. Importer `BD` : parametres (periode, frequence), partenaires manipules.
+7. Importer `SITUATION` / `PRET-RESTITUTION-EMPRUNT` -> operations prets/emprunts en cours.
+8. Donnees non migrees en V1 : CONS. PRODUIT (V2), RUBAN ADHESIF (V2), personnel/equipement.

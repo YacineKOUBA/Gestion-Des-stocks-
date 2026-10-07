@@ -33,6 +33,13 @@ async function main() {
     create: { code: RoleCode.SALES_ADMIN, label: 'Administration des ventes' },
   });
   void roleVentes;
+  // D25 : profil Master Data (lecture seule).
+  const roleMaster = await prisma.role.upsert({
+    where: { code: RoleCode.MASTER_DATA },
+    update: {},
+    create: { code: RoleCode.MASTER_DATA, label: 'Master Data' },
+  });
+  void roleMaster;
 
   // ---- Utilisateurs initiaux ----
   const adminHash = await bcrypt.hash('admin2026', 10);

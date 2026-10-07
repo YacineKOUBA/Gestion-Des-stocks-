@@ -1,12 +1,12 @@
 import { Router } from 'express';
 import { prisma } from '../prisma';
-import { expiryWhere, lotFlag } from '../utils/lotFlag';
+import { expiryWhere, lotFlag, LOT_FLAGS } from '../utils/lotFlag';
 import { parse } from '../utils/parse';
 import { lotSchema, lotUpdateSchema } from '../validators';
 import { toNumber } from '../utils/decimal';
 import { Prisma } from '@prisma/client';
 import { audit } from '../utils/audit';
-import { conflict } from '../utils/apiError';
+import { conflict, badRequest } from '../utils/apiError';
 import { isLotExhausted, lotStocks } from '../utils/lotStock';
 import { requirePermission } from '../middlewares/permissions';
 
@@ -21,9 +21,19 @@ router.get('/', requirePermission('lot:read'), async (req, res) => {
   const includeExhausted = req.query.includeExhausted === 'true';
   const now = new Date();
 
+  // D24 : un drapeau inconnu est REFUSE. Avant, il etait ignore et le filtre renvoyait
+  // tous les lots : un `?flag=ROUGE` lettre-morte apres le changement d'echelle aurait
+  // affiché la liste complete en faisant croire qu'il avait filtre.
+  const bornes = flag ? expiryWhere(flag, now) : {};
+  if (flag && !bornes) {
+    throw badRequest(
+      `Drapeau de péremption inconnu : ${flag}. Valeurs acceptées : ${LOT_FLAGS.join(', ')}.`,
+    );
+  }
+
   const where = {
     ...(articleId ? { articleId } : {}),
-    ...(flag ? { expiryDate: { not: null, ...expiryWhere(flag, now).expiryDate } } : {}),
+    ...(flag ? { expiryDate: { not: null, ...bornes!.expiryDate } } : {}),
     ...(search
       ? {
           OR: [

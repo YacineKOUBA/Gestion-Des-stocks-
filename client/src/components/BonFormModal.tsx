@@ -42,9 +42,9 @@ export function BonFormModal({
   onSaved: () => void;
   initial?: BonFormInitial;
 }) {
-  const articles = useAsync(() => articlesApi.list(), []);
-  const depots = useAsync(() => referentialApi.depots(), []);
-  const partners = useAsync(() => referentialApi.partners(), []);
+  const articles = useAsync(() => articlesApi.list(), [], { label: 'Articles' });
+  const depots = useAsync(() => referentialApi.depots(), [], { label: 'Dépôts' });
+  const partners = useAsync(() => referentialApi.partners(), [], { label: 'Acteurs' });
 
   const [form, setForm] = useState({
     type: initial?.type ?? ('SORTIE' as BonType),

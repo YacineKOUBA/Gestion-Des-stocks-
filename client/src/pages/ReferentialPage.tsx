@@ -41,7 +41,7 @@ const TABS: TabConfig[] = [
   },
   { key: 'categories', label: 'Catégories', model: null, codeLabel: 'Code', labelLabel: 'Libellé', load: () => referentialApi.categories() },
   { key: 'units', label: 'Unités de mesure', model: 'unit', codeLabel: 'Code', labelLabel: 'Libellé', load: () => referentialApi.units() },
-  { key: 'packaging', label: 'Conditionnements', model: 'packaging', codeLabel: 'Code (ignoré)', labelLabel: 'Libellé', load: () => referentialApi.packaging() },
+  { key: 'packaging', label: 'Conditionnements', model: 'packaging', codeLabel: 'Code', labelLabel: 'Libellé', load: () => referentialApi.packaging() },
   { key: 'origins', label: 'Origines', model: 'origin', codeLabel: 'Code', labelLabel: 'Libellé', load: () => referentialApi.origins() },
   { key: 'depots', label: 'Dépôts', model: 'depot', codeLabel: 'Code', labelLabel: 'Libellé', load: () => referentialApi.depots() },
   { key: 'locations', label: 'Emplacements', model: 'location', codeLabel: 'Code', labelLabel: 'Libellé', load: () => referentialApi.locations() },
@@ -190,7 +190,7 @@ function RefForm({ tab, onSaved }: { tab: TabConfig; onSaved: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const categories = useAsync(() => referentialApi.categories(), []);
+  const categories = useAsync(() => referentialApi.categories(), [], { label: 'Catégories' });
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();

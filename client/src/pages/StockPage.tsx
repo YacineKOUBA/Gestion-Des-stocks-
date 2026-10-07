@@ -15,8 +15,8 @@ export function StockPage() {
   const [selectedArticle, setSelectedArticle] = useState<number | null>(null);
   const [selectedThreshold, setSelectedThreshold] = useState<ThresholdRow | null>(null);
 
-  const depots = useAsync(() => stockApi.depots(), []);
-  const categories = useAsync(() => stockApi.categories(), []);
+  const depots = useAsync(() => stockApi.depots(), [], { label: 'Dépôts' });
+  const categories = useAsync(() => stockApi.categories(), [], { label: 'Catégories' });
   const rows = useAsync(
     () =>
       stockApi.rows({

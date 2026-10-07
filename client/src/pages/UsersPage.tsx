@@ -91,7 +91,7 @@ export function UsersPage() {
 }
 
 function UserCreateModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
-  const roles = useAsync(() => referentialApi.roles(), []);
+  const roles = useAsync(() => referentialApi.roles(), [], { label: 'Rôles' });
   const [form, setForm] = useState({ login: '', password: '', displayName: '', roleId: '' });
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);

@@ -21,8 +21,15 @@ const emptyLine: LineDraft = { articleId: '', quantity: '' };
 
 export function ReservationFormModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   const { user } = useAuth();
-  const articles = useAsync(() => articlesApi.list({}), []);
-  const partners = useAsync(() => referentialApi.partners(), []);
+  const articles = useAsync(() => articlesApi.list({}), [], { label: 'Articles' });
+  const partners = useAsync(() => referentialApi.partners(), [], { label: 'Acteurs' });
+  // D28 : ce `usersApi.list()` revient en 403 pour TOP_MANAGEMENT, SALES_ADMIN et
+  // MASTER_DATA, qui n'ont pas `user:read`. Il ne sert qu'a alimenter la
+  // `<datalist>` de suggestions : le champ reste une saisie en texte libre, que le
+  // serveur accepte telle quelle (`staffId` facultatif). Le libelle est donc VOLONTAIREMENT
+  // absent — le directeur a arbitre de ne pas traiter ce cas pour l'instant. Le
+  // poser rendrait le bandeau D28 visible ici, ce qui ferait passer une degradation
+  // connue pour une panne : il faut d'abord trancher le sort de `user:read`.
   const users = useAsync(() => usersApi.list(), []);
 
   const [lines, setLines] = useState<LineDraft[]>([{ ...emptyLine }]);

@@ -44,7 +44,7 @@ async function createRef(
     case 'unit':
       return prisma.unit.create({ data: { code, label } });
     case 'packaging':
-      return prisma.packaging.create({ data: { label } });
+      return prisma.packaging.create({ data: { code, label } });
     case 'origin':
       return prisma.origin.create({ data: { code, label } });
     case 'depot':

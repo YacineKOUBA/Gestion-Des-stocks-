@@ -8,7 +8,8 @@ import type { Lot, LotFlagCode } from '../types';
 import { formatDate, formatMoney } from '../utils/format';
 import { useAuth } from '../context/AuthContext';
 
-const FLAGS: LotFlagCode[] = ['ROUGE', 'ORANGE', 'VERT', 'PERIME'];
+/** D24 : du plus urgent au plus calme, pour que le deroulant se lise comme l'echelle. */
+const FLAGS: LotFlagCode[] = ['PERIME', 'ORANGE', 'JAUNE', 'VERT'];
 
 export function LotsPage() {
   const { can } = useAuth();
@@ -73,7 +74,7 @@ export function LotsPage() {
     <>
       <PageHeader
         title="Lots & péremptions"
-        subtitle="Suivi des lots et dates de péremption (Rouge < 6 mois, Orange < 12 mois, Vert > 12 mois)"
+        subtitle="Suivi des lots et dates de péremption (Périmé, Orange < 3 mois, Jaune < 6 mois, Vert > 6 mois)"
         actions={
           can('lot:write') ? (
             <button type="button" className="btn btn-primary" onClick={() => setCreating(true)}>
@@ -130,7 +131,7 @@ export function LotsPage() {
 }
 
 function LotFormModal({ lot, onClose, onSaved }: { lot?: Lot | null; onClose: () => void; onSaved: () => void }) {
-  const articles = useAsync(() => articlesApi.list(), []);
+  const articles = useAsync(() => articlesApi.list(), [], { label: 'Articles' });
   const [form, setForm] = useState({
     articleId: lot ? String(lot.articleId) : '',
     lotNumber: lot?.lotNumber ?? '',

@@ -139,10 +139,10 @@ export function LoansPage() {
 }
 
 function LoanFormModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
-  const articles = useAsync(() => articlesApi.list(), []);
-  const partners = useAsync(() => referentialApi.partners(), []);
-  const depots = useAsync(() => referentialApi.depots(), []);
-  const locations = useAsync(() => stockApi.locations(), []);
+  const articles = useAsync(() => articlesApi.list(), [], { label: 'Articles' });
+  const partners = useAsync(() => referentialApi.partners(), [], { label: 'Acteurs' });
+  const depots = useAsync(() => referentialApi.depots(), [], { label: 'Dépôts' });
+  const locations = useAsync(() => stockApi.locations(), [], { label: 'Emplacements' });
   const [form, setForm] = useState({
     type: 'PRET' as LoanType,
     partnerId: '',
@@ -166,6 +166,7 @@ function LoanFormModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
   const lots = useAsync(
     () => (form.articleId ? lotsApi.list({ articleId: Number(form.articleId) }) : Promise.resolve([])),
     [form.articleId],
+    { label: 'Lots' },
   );
   // meme source de verite que le controle serveur : /loans/disponibilite
   const dispo = useAsync(

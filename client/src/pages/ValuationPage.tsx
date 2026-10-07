@@ -14,9 +14,9 @@ export function ValuationPage() {
   const [familyId, setFamilyId] = useState('');
   const [depotId, setDepotId] = useState('');
 
-  const categories = useAsync(() => referentialApi.categories(), []);
-  const families = useAsync(() => referentialApi.families(), []);
-  const depots = useAsync(() => referentialApi.depots(), []);
+  const categories = useAsync(() => referentialApi.categories(), [], { label: 'Catégories' });
+  const families = useAsync(() => referentialApi.families(), [], { label: 'Familles' });
+  const depots = useAsync(() => referentialApi.depots(), [], { label: 'Dépôts' });
 
   // Familles disponibles : celles de la categorie choisie, sinon toutes les familles.
   const familyOptions = useMemo(() => {

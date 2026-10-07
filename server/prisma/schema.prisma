@@ -25,6 +25,10 @@ enum RoleCode {
   // mouvements et lots ; gestion des reservations SANS validation (une validation
   // autorise une sortie reelle du stock).
   SALES_ADMIN
+  // MasterData (D25) : consultation en lecture seule
+  // Tableau de bord, Etat de stock, Articles, Mouvements, Lots & peremptions,
+  // Prets/Emprunts, Reservations, Valorisation.
+  MASTER_DATA
 }
 
 enum PartnerType {
@@ -205,6 +209,7 @@ model Unit {
 
 model Packaging {
   id      Int       @id @default(autoincrement())
+  code    String    @unique @db.VarChar(10)
   label   String    @unique @db.VarChar(50)
   Article Article[]
 }
