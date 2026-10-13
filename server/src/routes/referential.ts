@@ -51,8 +51,14 @@ async function createRef(
       return prisma.depot.create({ data: { code, label } });
     case 'location':
       return prisma.location.create({ data: { code, label } });
-    case 'partner':
-      return prisma.partner.create({ data: { name: label, type: 'ENTITE' } });
+    case 'partner': {
+      const type = (req.query.type as string | undefined) || (req.body?.type as string | undefined);
+      let partnerType: 'FOURNISSEUR' | 'CLIENT' | 'ENTITE' | 'AUTRE' = 'ENTITE';
+      if (type && ['FOURNISSEUR', 'CLIENT', 'ENTITE', 'AUTRE'].includes(type)) {
+        partnerType = type as any;
+      }
+      return prisma.partner.create({ data: { name: label, type: partnerType } });
+    }
   }
 }
 
@@ -70,8 +76,14 @@ router.get('/depots', async (_req, res) =>
   res.json(await prisma.depot.findMany({ where: { isActive: true }, orderBy: { code: 'asc' } })));
 router.get('/locations', async (_req, res) =>
   res.json(await prisma.location.findMany({ where: { isActive: true }, orderBy: { code: 'asc' } })));
-router.get('/partners', async (_req, res) =>
-  res.json(await prisma.partner.findMany({ where: { isActive: true }, orderBy: { name: 'asc' } })));
+router.get('/partners', async (req, res) => {
+  const type = req.query.type as string | undefined;
+  const where: any = { isActive: true };
+  if (type && ['FOURNISSEUR', 'CLIENT', 'ENTITE', 'AUTRE'].includes(type)) {
+    where.type = type as any;
+  }
+  res.json(await prisma.partner.findMany({ where, orderBy: { name: 'asc' } }));
+});
 router.get('/roles', async (_req, res) =>
   res.json(await prisma.role.findMany({ orderBy: { id: 'asc' } })));
 

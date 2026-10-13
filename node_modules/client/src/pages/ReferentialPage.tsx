@@ -45,7 +45,8 @@ const TABS: TabConfig[] = [
   { key: 'origins', label: 'Origines', model: 'origin', codeLabel: 'Code', labelLabel: 'Libellé', load: () => referentialApi.origins() },
   { key: 'depots', label: 'Dépôts', model: 'depot', codeLabel: 'Code', labelLabel: 'Libellé', load: () => referentialApi.depots() },
   { key: 'locations', label: 'Emplacements', model: 'location', codeLabel: 'Code', labelLabel: 'Libellé', load: () => referentialApi.locations() },
-  { key: 'partners', label: 'Acteurs', model: 'partner', codeLabel: 'Code (ignoré)', labelLabel: 'Nom', load: () => referentialApi.partners() },
+  { key: 'clients', label: 'Clients', model: 'partner', codeLabel: 'Code (ignoré)', labelLabel: 'Nom', load: () => referentialApi.partners({ type: 'CLIENT' }) },
+  { key: 'fournisseurs', label: 'Fournisseurs', model: 'partner', codeLabel: 'Code (ignoré)', labelLabel: 'Nom', load: () => referentialApi.partners({ type: 'FOURNISSEUR' }) },
 ];
 
 export function ReferentialPage() {
@@ -99,7 +100,7 @@ export function ReferentialPage() {
     // D21 : la case est lue sans restriction (elle decrit la regle en vigueur) mais
     // ne se coche qu'avec `referential:write`, deja reserve a l'administrateur :
     // c'est lui qui applique la validation de la direction generale.
-    ...(active.key === 'partners'
+    ...(active.key === 'clients' || active.key === 'fournisseurs'
       ? [
           {
             key: 'plafondExempt',
@@ -198,11 +199,17 @@ function RefForm({ tab, onSaved }: { tab: TabConfig; onSaved: () => void }) {
     setError(null);
     setSuccess(null);
     try {
-      await referentialApi.create(tab.model as string, {
+      const payload: any = {
         code: code || '-',
         label,
         categoryId: categoryId ? Number(categoryId) : undefined,
-      });
+      };
+      if (tab.key === 'clients') {
+        payload.type = 'CLIENT';
+      } else if (tab.key === 'fournisseurs') {
+        payload.type = 'FOURNISSEUR';
+      }
+      await referentialApi.create(tab.model as string, payload);
       setCode('');
       setLabel('');
       setCategoryId('');

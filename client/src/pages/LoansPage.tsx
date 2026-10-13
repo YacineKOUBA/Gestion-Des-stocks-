@@ -254,11 +254,23 @@ function LoanFormModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
         <Field label="Acteur">
           <select value={form.partnerId} onChange={(e) => update('partnerId', e.target.value)} required>
             <option value="">—</option>
-            {partners.data?.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
+            {(() => {
+              const active = partners.data ?? [];
+              const clients = active.filter((p) => p.type === 'CLIENT');
+              const fournisseurs = active.filter((p) => p.type === 'FOURNISSEUR');
+              const others = active.filter((p) => p.type !== 'CLIENT' && p.type !== 'FOURNISSEUR');
+              const parts: React.ReactNode[] = [];
+              if (clients.length > 0) {
+                parts.push(<optgroup key="clients" label="CLIENTS">{clients.map((p) => (<option key={p.id} value={p.id}>{p.name}</option>))}</optgroup>);
+              }
+              if (fournisseurs.length > 0) {
+                parts.push(<optgroup key="fournisseurs" label="FOURNISSEURS">{fournisseurs.map((p) => (<option key={p.id} value={p.id}>{p.name}</option>))}</optgroup>);
+              }
+              if (others.length > 0) {
+                parts.push(<optgroup key="autres" label="AUTRES">{others.map((p) => (<option key={p.id} value={p.id}>{p.name}</option>))}</optgroup>);
+              }
+              return parts;
+            })()}
           </select>
         </Field>
         <Field label="Article">

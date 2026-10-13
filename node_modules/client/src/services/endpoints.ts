@@ -285,9 +285,9 @@ export const referentialApi = {
   origins: () => request<Origin[]>('/referential/origins'),
   depots: () => request<Depot[]>('/referential/depots'),
   locations: () => request<StorageLocation[]>('/referential/locations'),
-  partners: () => request<Partner[]>('/referential/partners'),
+  partners: (filters?: { type?: string }) => request<Partner[]>('/referential/partners', { query: { ...filters } }),
   roles: () => request<{ id: number; code: string; label: string }[]>('/referential/roles'),
-  create: (model: string, payload: { code: string; label: string; categoryId?: number | null }) =>
+  create: (model: string, payload: { code: string; label: string; categoryId?: number | null; type?: string } & Record<string, any>) =>
     request(`/referential/${model}`, { method: 'POST', body: payload }),
   remove: (model: string, id: number) => request(`/referential/${model}/${id}`, { method: 'DELETE' }),
   /**

@@ -138,7 +138,6 @@ export function ArticlesPage() {
     { key: 'sourceAchat', header: "Source d'achat", render: (a) => a.sourceAchat ?? '—' },
     { key: 'origin', header: 'Origine', render: (a) => a.origin?.label ?? '—' },
     { key: 'fabricant', header: 'Fabricant', render: (a) => a.fabricant ?? '—' },
-    { key: 'partner', header: 'Acteur', render: () => '-' },
     { key: 'application', header: 'Application', render: (a) => a.application ?? '—' },
     { key: 'unit', header: 'Unité de mesure', render: (a) => a.unit?.code ?? '—' },
     { key: 'packaging', header: 'Conditionnement', render: (a) => a.packaging?.label ?? '—' },

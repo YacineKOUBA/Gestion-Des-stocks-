@@ -1,0 +1,37 @@
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const users_1 = __importDefault(require("./users"));
+const articles_1 = __importDefault(require("./articles"));
+const movements_1 = __importDefault(require("./movements"));
+const stock_1 = __importDefault(require("./stock"));
+const lots_1 = __importDefault(require("./lots"));
+const inventories_1 = __importDefault(require("./inventories"));
+const loans_1 = __importDefault(require("./loans"));
+const reservations_1 = __importDefault(require("./reservations"));
+const valuation_1 = __importDefault(require("./valuation"));
+const bons_1 = __importDefault(require("./bons"));
+const dashboard_1 = __importDefault(require("./dashboard"));
+const settings_1 = __importDefault(require("./settings"));
+const audit_1 = __importDefault(require("./audit"));
+const referential_1 = __importDefault(require("./referential"));
+const router = (0, express_1.Router)();
+router.use('/users', users_1.default);
+router.use('/articles', articles_1.default);
+router.use('/movements', movements_1.default);
+router.use('/stock', stock_1.default);
+router.use('/lots', lots_1.default);
+router.use('/inventories', inventories_1.default);
+router.use('/loans', loans_1.default);
+router.use('/reservations', reservations_1.default);
+router.use('/valuation', valuation_1.default);
+router.use('/bons', bons_1.default);
+router.use('/dashboard', dashboard_1.default);
+router.use('/settings', settings_1.default);
+router.use('/audit', audit_1.default);
+router.use('/referential', referential_1.default);
+exports.default = router;
+//# sourceMappingURL=index.js.map
