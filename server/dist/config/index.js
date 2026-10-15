@@ -3,7 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.config = void 0;
 const nodeEnv = process.env.NODE_ENV ?? 'development';
 const jwtSecret = process.env.JWT_SECRET ?? 'CHANGE_ME';
-const corsOrigin = process.env.CORS_ORIGIN;
+const corsOrigin = process.env.CORS_ORIGIN ?? process.env.CORS_ORIGINS;
 if (nodeEnv === 'production' && jwtSecret === 'CHANGE_ME') {
     throw new Error('JWT_SECRET manquant : définissez une valeur forte dans .env avant de démarrer en production.');
 }

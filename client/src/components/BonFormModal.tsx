@@ -5,6 +5,7 @@ import { ErrorMessage, Field, Modal } from './ui';
 import type { BonType, Lot } from '../types';
 import { formatDate, todayInput } from '../utils/format';
 import { CURRENCY_OPTIONS } from '../utils/currencies';
+import { renderPartnerOptions } from './PartnerSelectOptions';
 
 interface LineDraft {
   articleId: string;
@@ -279,23 +280,7 @@ export function BonFormModal({
             onChange={(e) => setForm((prev) => ({ ...prev, partnerId: e.target.value }))}
           >
             <option value="">—</option>
-            {(() => {
-              const active = partners.data ?? [];
-              const clients = active.filter((p) => p.type === 'CLIENT');
-              const fournisseurs = active.filter((p) => p.type === 'FOURNISSEUR');
-              const others = active.filter((p) => p.type !== 'CLIENT' && p.type !== 'FOURNISSEUR');
-              const parts: React.ReactNode[] = [];
-              if (clients.length > 0) {
-                parts.push(<optgroup key="clients" label="CLIENTS">{clients.map((p) => (<option key={p.id} value={p.id}>{p.name}</option>))}</optgroup>);
-              }
-              if (fournisseurs.length > 0) {
-                parts.push(<optgroup key="fournisseurs" label="FOURNISSEURS">{fournisseurs.map((p) => (<option key={p.id} value={p.id}>{p.name}</option>))}</optgroup>);
-              }
-              if (others.length > 0) {
-                parts.push(<optgroup key="autres" label="AUTRES">{others.map((p) => (<option key={p.id} value={p.id}>{p.name}</option>))}</optgroup>);
-              }
-              return parts;
-            })()}
+            {renderPartnerOptions(partners.data)}
           </select>
         </Field>
 

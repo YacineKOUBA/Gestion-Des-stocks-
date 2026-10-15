@@ -43,8 +43,14 @@ async function createRef(model, code, label, categoryId) {
             return prisma_1.prisma.depot.create({ data: { code, label } });
         case 'location':
             return prisma_1.prisma.location.create({ data: { code, label } });
-        case 'partner':
-            return prisma_1.prisma.partner.create({ data: { name: label, type: 'ENTITE' } });
+        case 'partner': {
+            const type = req.query.type || req.body?.type;
+            let partnerType = 'ENTITE';
+            if (type && ['FOURNISSEUR', 'CLIENT', 'ENTITE', 'AUTRE'].includes(type)) {
+                partnerType = type;
+            }
+            return prisma_1.prisma.partner.create({ data: { name: label, type: partnerType } });
+        }
     }
 }
 router.get('/families', async (_req, res) => res.json(await prisma_1.prisma.family.findMany({ where: { isActive: true }, include: { category: true }, orderBy: { label: 'asc' } })));
@@ -54,7 +60,14 @@ router.get('/packaging', async (_req, res) => res.json(await prisma_1.prisma.pac
 router.get('/origins', async (_req, res) => res.json(await prisma_1.prisma.origin.findMany({ orderBy: { label: 'asc' } })));
 router.get('/depots', async (_req, res) => res.json(await prisma_1.prisma.depot.findMany({ where: { isActive: true }, orderBy: { code: 'asc' } })));
 router.get('/locations', async (_req, res) => res.json(await prisma_1.prisma.location.findMany({ where: { isActive: true }, orderBy: { code: 'asc' } })));
-router.get('/partners', async (_req, res) => res.json(await prisma_1.prisma.partner.findMany({ where: { isActive: true }, orderBy: { name: 'asc' } })));
+router.get('/partners', async (req, res) => {
+    const type = req.query.type;
+    const where = { isActive: true };
+    if (type && ['FOURNISSEUR', 'CLIENT', 'ENTITE', 'AUTRE'].includes(type)) {
+        where.type = type;
+    }
+    res.json(await prisma_1.prisma.partner.findMany({ where, orderBy: { name: 'asc' } }));
+});
 router.get('/roles', async (_req, res) => res.json(await prisma_1.prisma.role.findMany({ orderBy: { id: 'asc' } })));
 // Creation (admin) : POST /referential/:model
 router.post('/:model', (0, permissions_1.requirePermission)('referential:write'), async (req, res) => {

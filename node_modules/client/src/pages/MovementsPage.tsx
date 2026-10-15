@@ -17,6 +17,7 @@ import { Qty } from '../components/Qty';
 import { overlapConfirmation } from '../services/api';
 import type { Movement, Lot, ReservationOverlapConfirmation } from '../types';
 import { formatDate, formatNumber, todayInput, toNumberOrNull } from '../utils/format';
+import { renderPartnerOptions } from '../components/PartnerSelectOptions';
 
 const MOVE_TYPES = ['ENTREE', 'SORTIE', 'TRANSFERT', 'PERTE', 'AJUSTEMENT', 'RETOUR'];
 
@@ -674,23 +675,7 @@ function MovementFormModal({
         <Field label="Acteur">
           <select value={form.partnerId} onChange={(e) => update('partnerId', e.target.value)}>
             <option value="">—</option>
-            {(() => {
-              const active = partners.data ?? [];
-              const clients = active.filter((p) => p.type === 'CLIENT');
-              const fournisseurs = active.filter((p) => p.type === 'FOURNISSEUR');
-              const others = active.filter((p) => p.type !== 'CLIENT' && p.type !== 'FOURNISSEUR');
-              const parts: React.ReactNode[] = [];
-              if (clients.length > 0) {
-                parts.push(<optgroup key="clients" label="CLIENTS">{clients.map((p) => (<option key={p.id} value={p.id}>{p.name}</option>))}</optgroup>);
-              }
-              if (fournisseurs.length > 0) {
-                parts.push(<optgroup key="fournisseurs" label="FOURNISSEURS">{fournisseurs.map((p) => (<option key={p.id} value={p.id}>{p.name}</option>))}</optgroup>);
-              }
-              if (others.length > 0) {
-                parts.push(<optgroup key="autres" label="AUTRES">{others.map((p) => (<option key={p.id} value={p.id}>{p.name}</option>))}</optgroup>);
-              }
-              return parts;
-            })()}
+            {renderPartnerOptions(partners.data)}
           </select>
         </Field>
         <Field label="N° document">

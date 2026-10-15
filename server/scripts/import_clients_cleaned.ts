@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 const prisma = new PrismaClient();
 async function main() {
-  const csvPath = 'C:/Users/Y.DROUICHE/AppData/Local/Temp/opencode/clients_full.csv';
+  const csvPath = process.env.CLIENTS_CSV_PATH || path.join(process.env.TEMP || process.env.TMP || 'C:/Users/Y.DROUICHE/AppData/Local/Temp', 'opencode', 'clients_full.csv');
   const csv = fs.readFileSync(csvPath, 'utf8');
   const lines = csv.split(/\r?\n/).filter(l=>l.trim());
   let created = 0;
