@@ -41,6 +41,15 @@ async function main() {
   });
   void roleMaster;
 
+  // D29 : profil Consultant (VIEWER) — lecture seule de toutes les pages sauf
+  // Inventaire, Referentiel, Utilisateurs, Parametres et Journal d'audit.
+  const roleViewer = await prisma.role.upsert({
+    where: { code: RoleCode.VIEWER },
+    update: {},
+    create: { code: RoleCode.VIEWER, label: 'Consultant' },
+  });
+  void roleViewer;
+
   // ---- Utilisateurs initiaux ----
   const adminHash = await bcrypt.hash('admin2026', 10);
   const magHash = await bcrypt.hash('magasinier2026', 10);

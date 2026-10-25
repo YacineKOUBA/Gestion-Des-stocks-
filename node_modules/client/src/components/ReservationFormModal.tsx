@@ -6,12 +6,12 @@ import {
   usersApi,
 } from '../services/endpoints';
 import { errorMessage, useAsync } from '../hooks/useAsync';
-import { ErrorMessage, Field, Modal } from './ui';
+import { ErrorMessage, Field, Modal, SearchSelect } from './ui';
 import type { ReservationAvailability } from '../types';
 import { Qty } from './Qty';
 import { todayInput } from '../utils/format';
 import { useAuth } from '../context/AuthContext';
-import { renderPartnerOptions } from './PartnerSelectOptions';
+import { articleSearchOptions, partnerSearchOptions } from '../utils/searchOptions';
 
 interface LineDraft {
   articleId: string;
@@ -231,21 +231,19 @@ export function ReservationFormModal({ onClose, onSaved }: { onClose: () => void
         </Field>
 
         <Field label="Acteur">
-          <select
-            value={partnerId}
-            onChange={(e) => {
+          <SearchSelect
+            options={partnerSearchOptions(partners.data)}
+            value={partnerId ? Number(partnerId) : null}
+            onChange={(id) => {
               // D21 : le plafond depends de l'acteur. On jette l'apercu precedent
               // ici, a la source, plutot que dans l'effet de chargement : sans cela
               // l'ecran afficherait une fraction de seconde un plafond qui n'est
               // plus celui du nouvel acteur choisi.
               setDispo({});
-              setPartnerId(e.target.value);
+              setPartnerId(id ? String(id) : '');
             }}
-            required
-          >
-            <option value="">—</option>
-            {renderPartnerOptions(partners.data)}
-          </select>
+            placeholder="Rechercher un acteur…"
+          />
         </Field>
 
         {/* D21 : la dispense est une derogation a une regle de gestion. Elle doit
@@ -292,14 +290,12 @@ export function ReservationFormModal({ onClose, onSaved }: { onClose: () => void
           const trop = qte > maxLigne;
           return (
             <div className="line-editor" key={index}>
-              <select value={line.articleId} onChange={(e) => updateLine(index, { articleId: e.target.value })} required>
-                <option value="">Article…</option>
-                {articles.data?.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.code} — {a.designation}
-                  </option>
-                ))}
-              </select>
+              <SearchSelect
+                options={articleSearchOptions(articles.data)}
+                value={line.articleId ? Number(line.articleId) : null}
+                onChange={(id) => updateLine(index, { articleId: id ? String(id) : '' })}
+                placeholder="Article…"
+              />
               <input
                 type="number"
                 step="0.001"

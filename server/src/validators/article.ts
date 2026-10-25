@@ -37,4 +37,7 @@ export const referentialSchema = z.object({
   code: z.string().min(1).max(20),
   label: z.string().min(1).max(100),
   categoryId: z.number().int().positive().nullish(),
+  // Type d'acteur, utile uniquement pour le modele `partner` (CLIENT / FOURNISSEUR / ...).
+  // Optionnel : les autres referentiels l'ignorent.
+  type: z.enum(['FOURNISSEUR', 'CLIENT', 'ENTITE', 'AUTRE']).optional(),
 });

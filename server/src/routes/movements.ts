@@ -1,8 +1,11 @@
 import { Router } from 'express';
+import { MoveTypeCode } from '@prisma/client';
 import { prisma } from '../prisma';
-import { createMovement, cancelMovement, reactivateMovement, deleteMovement } from '../services/movementService';
+import { can } from '../auth/permissions';
+import { createMovement, cancelMovement, reactivateMovement, deleteMovement, updateMovement } from '../services/movementService';
+import { forbidden } from '../utils/apiError';
 import { parse, toBigInt } from '../utils/parse';
-import { movementSchema, reactivateSchema } from '../validators/movement';
+import { movementSchema, movementUpdateSchema, reactivateSchema } from '../validators/movement';
 import { requirePermission } from '../middlewares/permissions';
 
 const router = Router();
@@ -55,8 +58,38 @@ router.get('/', requirePermission('movement:read'), async (req, res) => {
 
 router.post('/', requirePermission('movement:write'), async (req, res) => {
   const input = parse(movementSchema, req.body);
-  const move = await createMovement({ ...input, movementDate: new Date(input.movementDate) }, req.user!.id);
+  // D26 : l'AJUSTEMENT est reserve a l'administrateur (demande de la direction generale).
+  // Le controle porte sur la route de SAISIE MANUELLE : la cloture d'inventaire genere
+  // egalement des AJUSTEMENT, mais elle passe par `inventory:decide`, deja reserve a
+  // l'administrateur, et n'emprunte donc pas cette porte.
+  if (input.type === MoveTypeCode.AJUSTEMENT && !can(req.user!.role, 'movement:adjust')) {
+    throw forbidden("Le mouvement d'AJUSTEMENT est réservé à l'administrateur");
+  }
+  // D31 : le Magasinier ne choisit pas la date d'un nouveau mouvement, elle est
+  // ATTRIBUEE automatiquement (le jour meme). Le champ est desactive dans le formulaire,
+  // mais un champ desactive ne protege rien : n'importe quel appel direct a l'API
+  // pourrait antidater une ecriture et fausser l'historique et le stock valorise a une
+  // date donnee. On ignore donc la date recue pour ce profil, sans refuser la requete
+  // (la saisie reste possible, c'est la date qui n'est pas negociable).
+  const movementDate =
+    req.user!.role === 'MAGASINIER' ? new Date() : new Date(input.movementDate);
+  const move = await createMovement({ ...input, movementDate }, req.user!.id);
   res.status(201).json(move);
+});
+
+// D30 : modification d'une ligne de mouvement existante. Reservee a l'administrateur
+// (`movement:edit`) : corriger une ligne deja ecrite deplace du stock et peut decaler un
+// bon, un pret ou une ligne d'inventaire qui s'y adossent. La route applique les memes
+// controles que la creation, empietement de reservation compris (jeton renvoye en 409).
+router.put('/:id', requirePermission('movement:edit'), async (req, res) => {
+  const id = toBigInt(req.params.id);
+  const input = parse(movementUpdateSchema, req.body);
+  const move = await updateMovement(
+    id,
+    { ...input, movementDate: new Date(input.movementDate) },
+    req.user!.id,
+  );
+  res.json(move);
 });
 
 // Annulation / reactivation / suppression : correction apres coup, reservee a l'administrateur.

@@ -127,17 +127,40 @@ export const observationTone: Record<string, string> = {
 };
 
 /**
- * D24 : quatre niveaux. PERIME et ROUGE partagent le rouge a titre de securite
- * (un drapeau inconnu ne doit jamais s'afficher sans couleur), mais PERIME est le
- * seul code que la regle produit pour un lot perime.
+ * D24 : quatre niveaux de peremption. PERIME et ROUGE partagent le rouge a titre
+ * de securite (un drapeau inconnu ne doit jamais s'afficher sans couleur), mais
+ * PERIME est le seul code que la regle produit pour un lot perime.
+ *
+ * Aplat FONCE et ecriture blanche pour un contraste net entre les niveaux, comme
+ * demande. Volontairement SEPARE des classes `.badge-*` partagees (statuts,
+ * observations, utilisateurs...) qui gardent leurs teintes douces : seuls les
+ * drapeaux de peremption passent en aplat fonce. Un code inconnu tombe sur un
+ * fond neutre fonce.
  */
-export const lotTone: Record<string, string> = {
-  VERT: 'green',
-  JAUNE: 'yellow',
-  ORANGE: 'orange',
-  PERIME: 'red',
-  ROUGE: 'red',
+/**
+ * Libelles affiches DANS les drapeaux : le code (PERIME/ORANGE/JAUNE/VERT) reste
+ * la source de verite pour la regle et la couleur, seul le texte visible est
+ * reformule pour se lire d'un coup d'oeil (duree restante plutot que nom de teinte).
+ * ROUGE est l'alias de securite de PERIME : il affiche donc aussi « PERIME ».
+ */
+const LOT_FLAG_LABEL: Record<string, string> = {
+  PERIME: 'PERIME',
+  ROUGE: 'PERIME',
+  ORANGE: '< 3 MOIS',
+  JAUNE: '< 6 MOIS',
+  VERT: '> 6 MOIS',
 };
+
+export function LotFlagBadge({ flag }: { flag: string }) {
+  const code = flag.trim().toUpperCase();
+  const connu = ['PERIME', 'ROUGE', 'ORANGE', 'JAUNE', 'VERT'].includes(code);
+  // Un code inconnu affiche tel quel (fond neutre) : ne jamais perdre l'information.
+  return (
+    <span className={`lot-flag${connu ? ` lot-flag-${code.toLowerCase()}` : ' lot-flag-unknown'}`}>
+      {LOT_FLAG_LABEL[code] ?? flag}
+    </span>
+  );
+}
 
 export interface SearchSelectOption {
   id: number;

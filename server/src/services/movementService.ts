@@ -139,15 +139,40 @@ async function assertAvailable(input: MoveInput, checkDepotId: number, db: Db): 
  * une reservation honoree genere un vrai SORTIE a la validation, et c'est ce
  * SORTIE-la qui compte comme depart client.
  */
-async function assertRetourCoherent(input: MoveInput, db: Db) {
+/**
+ * Un RETOUR rend de la merchandise sortie chez un client : il est donc refuse sur un
+ * article qui n'a jamais eu de SORTIE, et le total rendu ne peut pas depasser le total
+ * sorti.
+ *
+ * Seuls les mouvements SORTIE comptent comme departs client. PERTE et TRANSFERT
+ * sont exclus : une perte retrouvee se regle par un AJUSTEMENT (qui reintegre
+ * le stock). Les reservations n'ont plus de type de mouvement du tout (D20) :
+ * une reservation honoree genere un vrai SORTIE a la validation, et c'est ce
+ * SORTIE-la qui compte comme depart client.
+ *
+ * `excludeId` (modification d'une ligne existante) retire la ligne en cours de
+ * correction des deux totaux : sans cela, un RETOUR corrige se compterait lui-meme
+ * dans « deja retourne » et refuserait sa propre correction.
+ */
+async function assertRetourCoherent(input: MoveInput, db: Db, excludeId?: bigint) {
   const mouvements = await db.move.findMany({
-    where: { articleId: input.articleId, status: 'ACTIF', type: { code: MoveTypeCode.SORTIE } },
+    where: {
+      articleId: input.articleId,
+      status: 'ACTIF',
+      type: { code: MoveTypeCode.SORTIE },
+      ...(excludeId != null ? { id: { not: excludeId } } : {}),
+    },
     select: { sens: true, quantity: true },
   });
 
   const sorti = mouvements.reduce<Prisma.Decimal>((acc, m) => (m.sens < 0 ? acc.add(dec(m.quantity)) : acc), new Prisma.Decimal(0));
   const rendus = await db.move.findMany({
-    where: { articleId: input.articleId, status: 'ACTIF', type: { code: MoveTypeCode.RETOUR } },
+    where: {
+      articleId: input.articleId,
+      status: 'ACTIF',
+      type: { code: MoveTypeCode.RETOUR },
+      ...(excludeId != null ? { id: { not: excludeId } } : {}),
+    },
     select: { sens: true, quantity: true },
   });
   const rendu = rendus.reduce<Prisma.Decimal>((acc, m) => (m.sens > 0 ? acc.add(dec(m.quantity)) : acc), new Prisma.Decimal(0));
@@ -266,28 +291,34 @@ async function assertNoReservedOverlap(
   return amputations;
 }
 
+/**
+ * Sens (signe) qu'un type de mouvement applique au stock. Isole pour que la creation
+ * et la modification d'une ligne partagent EXACTEMENT la meme regle : une correction
+ * de type doit recalculer le sens, jamais le conserver.
+ */
+function sensDuType(type: MoveTypeCode, sensFourni?: number | null): number {
+  switch (type) {
+    case MoveTypeCode.ENTREE:
+    case MoveTypeCode.RETOUR:
+    case MoveTypeCode.INVENTAIRE:
+      return 1;
+    case MoveTypeCode.SORTIE:
+    case MoveTypeCode.PERTE:
+    case MoveTypeCode.TRANSFERT:
+      return -1;
+    case MoveTypeCode.AJUSTEMENT:
+      return sensFourni ?? 1;
+    default:
+      return 1;
+  }
+}
+
 async function createMovementTx(input: MoveInput, userId: number, db: Db) {
   const article = await assertLotRequired(input, db);
   await lockArticle(db, input.articleId);
   const currency = input.currency ?? article.currency ?? 'DZD';
 
-  let sens = input.sens ?? 1;
-  switch (input.type) {
-    case MoveTypeCode.ENTREE:
-    case MoveTypeCode.RETOUR:
-      sens = 1;
-      break;
-    case MoveTypeCode.SORTIE:
-    case MoveTypeCode.PERTE:
-      sens = -1;
-      break;
-    case MoveTypeCode.AJUSTEMENT:
-      sens = input.sens ?? 1;
-      break;
-    case MoveTypeCode.TRANSFERT:
-      sens = -1;
-      break;
-  }
+  const sens = sensDuType(input.type, input.sens);
 
   // Controle de disponibilite pour les mouvements negatifs (0.4 : bloquer).
   // Le stock de la cellule source est conserve : c'est le Y du controle D20.
@@ -719,4 +750,187 @@ export async function deleteMovement(moveId: bigint, userId: number) {
     }
     throw e;
   }
+}
+
+/**
+ * MODIFIE une ligne de mouvement existante (administrateur uniquement, `movement:edit`).
+ *
+ * Toutes les colonnes saisissables sont modifiables. Le stock etant recalcule a partir
+ * des mouvements ACTIFS, la correction du type, de la quantite, du lot, du depot ou de
+ * l'article deplace de la marchandise : l'operation repasse donc par EXACTEMENT les
+ * memes controles que la creation — disponibilite de la cellule, coherence d'un RETOUR,
+ * depot destination d'un TRANSFERT, et surtout le point de controle unique D20
+ * (`assertNoReservedOverlap`), car une correction qui retire du stock peut mordre une
+ * reservation ACTIF. Une correction qui en fait RENTRER (ex. : augmenter une ENTREE)
+ * ne peut pas mordre : `assertNoReservedOverlap` la laisse passer, et c'est voulu.
+ *
+ * Regle de perimetre — TROIS situations sont refusees, parce que la ligne n'appartient
+ * pas a l'utilisateur mais a un AUTRE document qui s'y adosse :
+ *   - un mouvement de PRET (`loanId`) : le pret porte les quantites rendues ; corriger
+ *     la ligne desynchroniserait son solde ;
+ *   - un mouvement de CLOTURE D'INVENTAIRE (`inventoryId`) : la ligne d'inventaire
+ *     porte l'ecart valide et sa justification ; corriger le mouvement rendrait
+ *     l'ecart affiche faux ;
+ *   - un mouvement issu d'une RESERVATION (`reservationId`) : meme raison.
+ * Dans ces trois cas, l'utilisateur doit annuler puis ressaisir l'operation PORTEUSE
+ * (le pret, l'inventaire, la reservation), ce qui reste trace et coherent.
+ *
+ * Un TRANSFERT est egalement refuse : c'est un COUPLE de deux lignes liees par
+ * `linkMoveId` (une SORTIE source, une ENTREE destination). Modifier une seule moitie
+ * desynchroniserait le couple — le stock du depot destination ne suivrait plus. Pour un
+ * transfert, on annule (les deux moities basculent) puis on ressaisit.
+ */
+export async function updateMovement(
+  moveId: bigint,
+  input: MoveInput,
+  userId: number,
+) {
+  const move = await prisma.move.findUnique({
+    where: { id: moveId },
+    include: {
+      type: true,
+      loan: { select: { id: true } },
+      restitutions: { select: { id: true } },
+      inventoryLine: { select: { id: true } },
+    },
+  });
+  if (!move) throw notFound('Mouvement introuvable');
+
+  if (move.status !== 'ACTIF') {
+    throw badRequest(
+      'Seul un mouvement ACTIF peut être modifié. Réactivez-le d’abord, ou corrigez l’opération qui l’a annulé.',
+    );
+  }
+  if (move.type.code === MoveTypeCode.TRANSFERT || input.type === MoveTypeCode.TRANSFERT) {
+    throw badRequest(
+      'Un TRANSFERT est deux lignes liées : il ne peut pas être modifié ligne à ligne. Annulez le transfert, puis ressaisissez-le.',
+    );
+  }
+  // Un mouvement de pret (`loans.movementId`) ET un mouvement de restitution
+  // (`loan_restitutions.movementId`) appartiennent au meme pret : corriger l'un ou
+  // l'autre desynchroniserait le solde rendu, qui est calcule sur ces lignes.
+  if (move.loan || move.restitutions.length > 0) {
+    throw conflict(
+      'Ce mouvement appartient à un prêt ou à une restitution de prêt : modifiez le prêt lui-même, sinon son solde deviendrait faux.',
+    );
+  }
+  if (move.inventoryId != null || move.inventoryLine) {
+    throw conflict(
+      'Ce mouvement a été généré par la clôture d’un inventaire : il porte l’écart validé. Annulez l’inventaire ou corrigez-le par un AJUSTEMENT.',
+    );
+  }
+  if (move.reservationId != null) {
+    throw conflict(
+      'Ce mouvement a été généré par la validation d’une réservation : corrigez la réservation, ou annulez puis ressaisissez la sortie.',
+    );
+  }
+
+  // Le sens est recalcule a partir du type DEMANDE : changer le type d'une ligne doit
+  // changer son effet sur le stock, sinon un « ENTREE » corrige en « SORTIE » garderait
+  // un signe +1 et ferait monter le stock au lieu de le faire baisser.
+  const sens = sensDuType(input.type, input.sens);
+
+  let amputations: Amputation[] = [];
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const article = await assertLotRequired(input, tx);
+    // Verrou sur l'article SOURCE actuel ET sur le nouveau : le stock des deux cellules
+    // bouge, et deux corrections concurrentes du meme article ne doivent pas se croiser.
+    await lockArticle(tx, move.articleId);
+    if (input.articleId !== move.articleId) await lockArticle(tx, input.articleId);
+
+    const currency = input.currency ?? article.currency ?? 'DZD';
+
+    // Re-validation sur la cellule DESTINATION de l'ecriture, en EXCLUANT la ligne que
+    // l'on corrige : elle est encore ACTIF et compterait sa propre ancienne quantite.
+    // La mesure donne donc le stock reellement disponible une fois la correction faite,
+    // comme si la ligne avait deja sa nouvelle valeur.
+    let stockCellule: Prisma.Decimal | null = null;
+    if (
+      input.type === MoveTypeCode.SORTIE ||
+      input.type === MoveTypeCode.PERTE ||
+      (input.type === MoveTypeCode.AJUSTEMENT && sens < 0)
+    ) {
+      stockCellule = await availableStockDeci(
+        {
+          articleId: input.articleId,
+          lotId: input.lotId,
+          depotId: input.depotId,
+          locationId: input.locationId,
+          excludeIds: [moveId],
+        },
+        tx,
+      );
+      if (stockCellule.lessThan(dec(input.quantity))) {
+        throw badRequest(
+          `Stock insuffisant pour cet article (disponible : ${toNumber(stockCellule)})`,
+        );
+      }
+    }
+    if (input.type === MoveTypeCode.RETOUR) {
+      await assertRetourCoherent(input, tx, moveId);
+    }
+
+    // D20 : meme porte que la creation. Le stock `stockCellule` a ete calcule en
+    // excluant la ligne corrigee : c'est le Y de la formule.
+    amputations = await assertNoReservedOverlap(input, sens, stockCellule, userId, tx);
+
+    const typeId = (await tx.moveType.findUniqueOrThrow({ where: { code: input.type } })).id;
+
+    return tx.move.update({
+      where: { id: moveId },
+      data: {
+        typeId,
+        articleId: input.articleId,
+        quantity: input.quantity,
+        sens,
+        movementDate: input.movementDate,
+        depotId: input.depotId,
+        locationId: input.locationId,
+        depotDestId: null,
+        locationDestId: null,
+        lotId: input.lotId,
+        partnerId: input.partnerId,
+        docNumber: input.docNumber,
+        unitPrice: input.unitPrice,
+        currency,
+        observation: input.observation,
+      },
+    });
+  });
+
+  await audit(userId, 'MODIFICATION', 'movement', String(moveId), {
+    moveId,
+    avant: {
+      type: move.type.code,
+      articleId: move.articleId,
+      quantity: toNumber(move.quantity, 3),
+      sens: move.sens,
+      depotId: move.depotId,
+      lotId: move.lotId,
+      locationId: move.locationId,
+      partnerId: move.partnerId,
+      movementDate: move.movementDate,
+      docNumber: move.docNumber,
+      unitPrice: move.unitPrice != null ? toNumber(move.unitPrice, 4) : null,
+      observation: move.observation,
+    },
+    apres: {
+      type: input.type,
+      articleId: input.articleId,
+      quantity: input.quantity,
+      sens,
+      depotId: input.depotId,
+      lotId: input.lotId ?? null,
+      locationId: input.locationId ?? null,
+      partnerId: input.partnerId ?? null,
+      movementDate: input.movementDate,
+      docNumber: input.docNumber ?? null,
+      unitPrice: input.unitPrice ?? null,
+      observation: input.observation ?? null,
+    },
+    ...(amputations.length ? { amputations } : {}),
+  });
+
+  return updated;
 }

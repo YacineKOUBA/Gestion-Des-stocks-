@@ -1,4 +1,4 @@
-import { useState, useRef, type FormEvent } from 'react';
+import { useEffect, useState, useRef, type FormEvent } from 'react';
 import {
   articlesApi,
   lotsApi,
@@ -9,17 +9,46 @@ import {
 } from '../services/endpoints';
 import { useAuth } from '../context/AuthContext';
 import { errorMessage, useAsync } from '../hooks/useAsync';
-import { Badge, Card, ErrorMessage, Field, Modal, PageHeader, Spinner, SuccessMessage } from '../components/ui';
+import { Badge, Card, ErrorMessage, Field, Modal, PageHeader, SearchSelect, Spinner, SuccessMessage } from '../components/ui';
 import { DataTable, type Column } from '../components/DataTable';
 import { BonFormModal, type BonFormInitial } from '../components/BonFormModal';
 import { OverlapConfirm } from '../components/OverlapConfirm';
 import { Qty } from '../components/Qty';
 import { overlapConfirmation } from '../services/api';
-import type { Movement, Lot, ReservationOverlapConfirmation } from '../types';
+import type { Movement, Lot, Partner, ReservationOverlapConfirmation } from '../types';
 import { formatDate, formatNumber, todayInput, toNumberOrNull } from '../utils/format';
-import { renderPartnerOptions } from '../components/PartnerSelectOptions';
+import { articleSearchOptions, partnerSearchOptions } from '../utils/searchOptions';
 
-const MOVE_TYPES = ['ENTREE', 'SORTIE', 'TRANSFERT', 'PERTE', 'AJUSTEMENT', 'RETOUR'];
+const MOVE_TYPES = ['ENTREE', 'SORTIE', 'TRANSFERT', 'PERTE', 'AJUSTEMENT', 'RETOUR', 'INVENTAIRE'];
+
+// Operations internes : elles ne renvoient ni a un client ni a un fournisseur
+// (transfert entre depots, inventaire, ajustement, perte). L'acteur est donc
+// PRE-REMPLI avec l'entite interne « GD Trading / BLIDA ». Ce n'est qu'une
+// suggestion de saisie : l'utilisateur reste libre de choisir un autre acteur,
+// le serveur n'impose rien.
+const MOVE_TYPES_ACTEUR_INTERNE = ['TRANSFERT', 'INVENTAIRE', 'AJUSTEMENT', 'PERTE'];
+
+/** Libelle de l'entite interne, tolerant au prefixe (« EURL ») et a la casse. */
+const ACTEUR_INTERNE_NOM = 'gd trading / blida';
+
+/**
+ * Retrouve l'entite interne dans la liste des acteurs. L'identifiant DIFFERE selon
+ * les bases (793 en local, absent en production tant qu'il n'a pas ete cree), on
+ * ne peut donc pas le figer en dur : c'est le LIBELLE qui sert de cle.
+ *
+ * On exige les deux mentions « gd trading » ET « blida » pour ne jamais tomber sur
+ * un homonyme sans rapport (« HAMZA GD TRADING », « GROSSISTE BLIDA »).
+ */
+function findActeurInterne(partners: Partner[] | null | undefined): Partner | undefined {
+  if (!partners) return undefined;
+  const norm = (s: string) => s.trim().toLowerCase();
+  return (
+    partners.find((p) => p.isActive && norm(p.name) === ACTEUR_INTERNE_NOM) ??
+    partners.find(
+      (p) => p.isActive && norm(p.name).includes('gd trading') && norm(p.name).includes('blida'),
+    )
+  );
+}
 
 interface BonDraft {
   label: string;
@@ -74,6 +103,8 @@ export function MovementsPage() {
   const [pageSize, setPageSize] = useState(100);
   const [offset, setOffset] = useState(0);
   const [creating, setCreating] = useState(false);
+  // D30 : ligne en cours de correction (administrateur uniquement).
+  const [editing, setEditing] = useState<Movement | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [pending, setPending] = useState<BonDraft[]>([]);
   const [draftIndex, setDraftIndex] = useState(0);
@@ -199,6 +230,18 @@ export function MovementsPage() {
   }
 
   const columns: Column<Movement>[] = [
+    {
+      key: 'item',
+      header: 'ITEM',
+      align: 'right',
+      className: 'col-item',
+      // Numero de ligne chronologique, pas un identifiant : le tout premier mouvement
+      // (le plus ancien) porte 1, et chaque mouvement suivant incremente. Le tableau
+      // est affiche du PLUS RECENT au plus ancien (tri serveur), donc le numero se
+      // deduit du total et du rang de la ligne dans l'ensemble pagine : `offset + index`
+      // est le rang absolu de la ligne, et `total - rang` remonte vers 1 pour l'ancien.
+      render: (_m, index) => formatNumber(total - (offset + index)),
+    },
     { key: 'movementDate', header: 'Date', render: (m) => formatDate(m.movementDate) },
     { key: 'type', header: 'Type', render: (m) => m.type?.code ?? '—' },
     { key: 'article', header: 'Article', render: (m) => (m.article ? `${m.article.code} — ${m.article.designation}` : '—') },
@@ -277,16 +320,33 @@ export function MovementsPage() {
           <DataTable
             columns={[
               ...columns,
-              ...(can('movement:revise')
+              ...(can('movement:revise') || can('movement:edit')
                 ? ([
                     {
                       key: 'actions',
                       header: 'Actions',
                       render: (m: Movement) =>
                         m.status === 'ACTIF' ? (
-                          <button type="button" className="btn btn-small" onClick={() => handleCancel(m)}>
-                            Annuler
-                          </button>
+                          <span className="btn-group">
+                            {/* D30 : correction d'une ligne. `movement:edit` est reserve a
+                                l'administrateur ; le serveur refuse de toute facon (403),
+                                mais autant ne pas montrer le bouton. */}
+                            {can('movement:edit') ? (
+                              <button
+                                type="button"
+                                className="btn btn-small"
+                                onClick={() => {
+                                  setSuccess(null);
+                                  setEditing(m);
+                                }}
+                              >
+                                Modifier
+                              </button>
+                            ) : null}
+                            <button type="button" className="btn btn-small" onClick={() => handleCancel(m)}>
+                              Annuler
+                            </button>
+                          </span>
                         ) : (
                           <span className="btn-group">
                             <button type="button" className="btn btn-small" onClick={() => handleReactivate(m)}>
@@ -364,6 +424,20 @@ export function MovementsPage() {
         />
       ) : null}
 
+      {/* D30 : correction d'une ligne existante. Pas d'elaboration de bon ici : la
+          correction d'un mouvement deja ecrit ne cree pas une nouvelle piece. */}
+      {editing ? (
+        <MovementFormModal
+          movement={editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            setEditing(null);
+            setSuccess(`Mouvement ${editing.id} modifié.`);
+            movements.reload();
+          }}
+        />
+      ) : null}
+
       {pending.length > 0 && draftIndex < pending.length ? (
         <Modal title="Élaborer un bon" onClose={() => setPending([])}>
           <p>
@@ -429,30 +503,57 @@ export function MovementsPage() {
 function MovementFormModal({
   onClose,
   onSaved,
+  movement,
 }: {
   onClose: () => void;
   onSaved: (moveType: string, move: Movement) => void;
+  /** D30 : ligne a CORRIGER. Absent = nouvelle saisie. */
+  movement?: Movement;
 }) {
+  // D26 : l'AJUSTEMENT est reserve a l'administrateur (movement:adjust). Ce filtre n'est
+  // qu'un confort d'ecran : le vrai controle reste la route de creation, qui refuse en
+  // 403 tout AJUSTEMENT saisi par un profil non admin.
+  const { can, user } = useAuth();
+  const enEdition = movement != null;
   const articles = useAsync(() => articlesApi.list(), [], { label: 'Articles' });
   const depots = useAsync(() => referentialApi.depots(), [], { label: 'Dépôts' });
   const locations = useAsync(() => stockApi.locations(), [], { label: 'Emplacements' });
   const partners = useAsync(() => referentialApi.partners(), [], { label: 'Acteurs' });
   // Lots fetches uniquement pour l'article selectionne (le serveur filtre par articleId).
-  const [form, setForm] = useState({
-    type: 'ENTREE',
-    articleId: '',
-    quantity: '',
-    movementDate: todayInput(),
-    depotId: '',
-    locationId: '',
-    depotDestId: '',
-    locationDestId: '',
-    lotId: '',
-    partnerId: '',
-    docNumber: '',
-    unitPrice: '',
-    observation: '',
-  });
+  const [form, setForm] = useState(() =>
+    movement
+      ? {
+          type: movement.type?.code ?? 'ENTREE',
+          articleId: String(movement.articleId),
+          // `quantity` arrive en Decimal serialise : on l'affiche sans zero inutile.
+          quantity: String(Number(movement.quantity)),
+          movementDate: movement.movementDate.slice(0, 10),
+          depotId: String(movement.depotId),
+          locationId: movement.locationId != null ? String(movement.locationId) : '',
+          depotDestId: movement.depotDestId != null ? String(movement.depotDestId) : '',
+          locationDestId: movement.locationDestId != null ? String(movement.locationDestId) : '',
+          lotId: movement.lotId != null ? String(movement.lotId) : '',
+          partnerId: movement.partnerId != null ? String(movement.partnerId) : '',
+          docNumber: movement.docNumber ?? '',
+          unitPrice: movement.unitPrice != null ? String(Number(movement.unitPrice)) : '',
+          observation: movement.observation ?? '',
+        }
+      : {
+          type: 'ENTREE',
+          articleId: '',
+          quantity: '',
+          movementDate: todayInput(),
+          depotId: '',
+          locationId: '',
+          depotDestId: '',
+          locationDestId: '',
+          lotId: '',
+          partnerId: '',
+          docNumber: '',
+          unitPrice: '',
+          observation: '',
+        },
+  );
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   // D20 : conflit d'empietement renvoye par le serveur (409), a confirmer explicitement.
@@ -487,10 +588,32 @@ function MovementFormModal({
   const selectedArticle = (articles.data ?? []).find((a) => String(a.id) === form.articleId);
   const lotSelectionnel = articleLots.find((l) => String(l.id) === form.lotId) ?? null;
   const isTransfer = form.type === 'TRANSFERT';
+  // D26 : l'AJUSTEMENT n'est propose qu'aux profils qui en ont le droit (administrateur).
+  const typesDisponibles = can('movement:adjust') ? MOVE_TYPES : MOVE_TYPES.filter((t) => t !== 'AJUSTEMENT');
+  // D31 : le champ Date est verrouille pour le Magasinier, et POUR LUI SEUL. La regle ne
+  // vise que la SAISIE d'un nouveau mouvement : la correction d'une ligne existante
+  // (`enEdition`) est de toute facon reservee a l'administrateur, qui garde la main.
+  // On teste le ROLE et non un droit : la demande nomme le profil, et un futur droit
+  // accorde au magasinier ne doit pas rouvrir ce champ par effet de bord.
+  const dateVerrouillee = !enEdition && user?.role === 'MAGASINIER';
 
   function update(key: keyof typeof form, value: string) {
     setForm((prev) => ({ ...prev, [key]: value }));
   }
+
+  // Operations internes : l'acteur est pre-rempli avec l'entite « GD Trading /
+  // BLIDA ». L'effet ne se declenche qu'au CHANGEMENT de type (et sur le chargement
+  // des acteurs) : une fois pre-rempli, une correction manuelle de l'utilisateur
+  // n'est pas ecrasee, puisque `form.type` n'a pas bouge. L'acteur interne est
+  // recherche par libelle (son identifiant differe selon les bases) ; s'il n'existe
+  // pas encore le champ reste vide et l'operation s'enregistre sans acteur.
+  const acteurInterneId = findActeurInterne(partners.data)?.id;
+  useEffect(() => {
+    if (!MOVE_TYPES_ACTEUR_INTERNE.includes(form.type)) return;
+    if (!acteurInterneId) return;
+    const valeur = String(acteurInterneId);
+    setForm((prev) => (prev.partnerId === valeur ? prev : { ...prev, partnerId: valeur }));
+  }, [form.type, acteurInterneId]);
 
   // Prix par defaut : prix de l'article a la selection, puis prix du lot si le lot en a un.
   function handleArticleChange(value: string) {
@@ -530,7 +653,10 @@ function MovementFormModal({
       type: form.type,
       articleId: Number(form.articleId),
       quantity: Number(form.quantity),
-      movementDate: form.movementDate,
+      // D31 : date verrouillee (Magasinier) => on impose le jour meme, sans dependre de
+      // l'etat du champ. Le serveur reste l'autorite ; ici on garantit seulement qu'aucune
+      // valeur perimee ne parte.
+      movementDate: dateVerrouillee ? todayInput() : form.movementDate,
       depotId: Number(form.depotId),
       locationId: form.locationId ? Number(form.locationId) : null,
       depotDestId: isTransfer && form.depotDestId ? Number(form.depotDestId) : null,
@@ -550,6 +676,12 @@ function MovementFormModal({
     setError(null);
     dernierPayload.current = payload;
     try {
+      if (enEdition) {
+        const updated = await movementsApi.update(movement.id, payload);
+        setOverlap(null);
+        onSaved(form.type, updated);
+        return;
+      }
       const created = await movementsApi.create(payload);
       const createdMove = (created as { sortie?: Movement }).sortie ?? (created as Movement);
       setOverlap(null);
@@ -559,7 +691,7 @@ function MovementFormModal({
       if (conflict) {
         setOverlap(conflict);
       } else {
-        setError(errorMessage(err, 'Création impossible'));
+        setError(errorMessage(err, enEdition ? 'Modification impossible' : 'Création impossible'));
       }
     } finally {
       setSubmitting(false);
@@ -567,12 +699,12 @@ function MovementFormModal({
   }
 
   return (
-    <Modal title="Nouveau mouvement" onClose={onClose}>
+    <Modal title={enEdition ? `Modifier le mouvement ${movement.id}` : 'Nouveau mouvement'} onClose={onClose}>
       <form onSubmit={handleSubmit} className="form-grid" noValidate>
         <ErrorMessage message={error} />
         <Field label="Type">
           <select value={form.type} onChange={(e) => update('type', e.target.value)}>
-            {MOVE_TYPES.map((t) => (
+            {typesDisponibles.map((t) => (
               <option key={t} value={t}>
                 {t}
               </option>
@@ -580,14 +712,12 @@ function MovementFormModal({
           </select>
         </Field>
         <Field label="Article">
-          <select value={form.articleId} onChange={(e) => handleArticleChange(e.target.value)} required>
-            <option value="">—</option>
-            {articles.data?.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.code} — {a.designation}
-              </option>
-            ))}
-          </select>
+          <SearchSelect
+            options={articleSearchOptions(articles.data)}
+            value={form.articleId ? Number(form.articleId) : null}
+            onChange={(id) => handleArticleChange(id ? String(id) : '')}
+            placeholder="Rechercher un article…"
+          />
         </Field>
         <Field label="Quantité">
           <input
@@ -600,7 +730,19 @@ function MovementFormModal({
           />
         </Field>
         <Field label="Date">
-          <input type="date" value={form.movementDate} onChange={(e) => update('movementDate', e.target.value)} required />
+          <input
+            type="date"
+            value={form.movementDate}
+            onChange={(e) => update('movementDate', e.target.value)}
+            // D31 : le magasinier ne choisit pas la date d'un NOUVEAU mouvement, elle est
+            // attribuee automatiquement (le jour meme). Il saisit l'entree/sortie au moment
+            // ou elle a lieu ; antidater une ecriture fausserait l'historique et le stock
+            // valorise a une date donnee. L'administrateur, lui, garde la main pour
+            // corriger apres coup.
+            disabled={dateVerrouillee}
+            title={dateVerrouillee ? 'Date attribuée automatiquement (profil Magasinier)' : undefined}
+            required
+          />
         </Field>
         <Field label="Dépôt">
           <select value={form.depotId} onChange={(e) => update('depotId', e.target.value)} required>
@@ -672,11 +814,20 @@ function MovementFormModal({
               </p>
             ) : null}
         </Field>
-        <Field label="Acteur">
-          <select value={form.partnerId} onChange={(e) => update('partnerId', e.target.value)}>
-            <option value="">—</option>
-            {renderPartnerOptions(partners.data)}
-          </select>
+        <Field
+          label="Acteur"
+          hint={
+            MOVE_TYPES_ACTEUR_INTERNE.includes(form.type)
+              ? 'Acteur proposé automatiquement pour cette opération interne : modifiable.'
+              : undefined
+          }
+        >
+          <SearchSelect
+            options={partnerSearchOptions(partners.data)}
+            value={form.partnerId ? Number(form.partnerId) : null}
+            onChange={(id) => update('partnerId', id ? String(id) : '')}
+            placeholder="Rechercher un acteur…"
+          />
         </Field>
         <Field label="N° document">
           <input value={form.docNumber} onChange={(e) => update('docNumber', e.target.value)} />
@@ -698,7 +849,7 @@ function MovementFormModal({
             Annuler
           </button>
           <button type="submit" className="btn btn-primary" disabled={submitting}>
-            {submitting ? 'Enregistrement…' : 'Enregistrer'}
+            {submitting ? 'Enregistrement…' : enEdition ? 'Enregistrer les modifications' : 'Enregistrer'}
           </button>
         </div>
       </form>

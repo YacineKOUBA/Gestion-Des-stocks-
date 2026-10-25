@@ -17,8 +17,23 @@ import type { RoleCode } from '@prisma/client';
  *
  * - `article:write`        creation, modification, prix, suppression
  * - `lot:write`           creation et modification d'un lot (droit du magasinier)
+ * - `lot:delete`          suppression DEFINITIVE d'un lot JAMAIS mouvemente (droit de
+ *                          l'administrateur). Distinct de `write` car un magasinier cree
+ *                          et corrige un lot, mais ne doit pas effacer une reference.
  * - `movement:write`       saisie d'un mouvement
  * - `movement:revise`      annulation, reactivation, suppression (correction apres coup)
+ * - `movement:edit`        modification d'une ligne de mouvement EXISTANTE. Reservee a
+ *                          l'administrateur : corriger une ligne deja ecrite change le
+ *                          stock d'une cellule et peut decaler un bon, un pret ou une
+ *                          ligne d'inventaire qui s'y adossent, c'est donc une
+ *                          operation de revision, pas de saisie.
+ * - `movement:adjust`      saisie d'un AJUSTEMENT. Reserve a l'administrateur, a la
+ *                          demande de la direction generale : l'ajustement corrige le
+ *                          stock hors de tout flux reel (ni entree ni sortie
+ *                          justifiee), il ne doit donc etre saisi que par l'admin.
+ *                          Distinct de `movement:write` : un magasinier saisit les
+ *                          autres types. La cloture d'inventaire genere aussi des
+ *                          AJUSTEMENT, mais elle passe par `inventory:decide`.
  * - `inventory:count`     saisie des quantites comptees (droit du magasinier)
  * - `inventory:write`      creation d'une campagne, generation des lignes
  * - `inventory:decide`     validation d'une ligne, cloture de la campagne
@@ -27,12 +42,16 @@ import type { RoleCode } from '@prisma/client';
  * - `referential:manage`   acces a l'ECRAN Referentiel (liste + ajout/suppression).
  *                          Distinct de `read` : un profil peut avoir besoin des
  *                          listes pour travailler sans pour autant gerer le referentiel.
- * - `reservation:write`    creation d'une reservation, et ANNULATION (le stock est
- *                          immediatement rendu)
- * - `reservation:decide`   VALIDATION d'une reservation. Scinde de `write` car la
- *                          validation transforme les mouvements de blocage en
- *                          SORTIES : elle autorise une sortie reelle du stock.
- *                          Le module Reservation n'a pas d'autre ecriture.
+ * - `reservation:write`    creation d'une reservation/de demande et ANNULATION
+ *                          (le stock est immediatement rendu)
+ * - `reservation:approve`  APPROBATION d'une DEMANDE de reservation par la direction
+ *                          generale / administration : transforme une demande non
+ *                          bloquante en reservation reelle (ACTIF) en figeant les lots
+ *                          par FEFO et en bloquant les quantites.
+ * - `reservation:decide`   VALIDATION d'une reservation REELLE (ACTIF). Scinde des
+ *                          autres droits car la validation transforme les mouvements
+ *                          de blocage en SORTIES : elle autorise une sortie reelle du
+ *                          stock.
  * - `settings:read`        consultation des seuils et constantes
  */
 export const PERMISSIONS = [
@@ -43,8 +62,11 @@ export const PERMISSIONS = [
   'movement:read',
   'movement:write',
   'movement:revise',
+  'movement:edit',
+  'movement:adjust',
   'lot:read',
   'lot:write',
+  'lot:delete',
   'inventory:read',
   'inventory:count',
   'inventory:write',
@@ -53,6 +75,7 @@ export const PERMISSIONS = [
   'loan:write',
   'reservation:read',
   'reservation:write',
+  'reservation:approve',
   'reservation:decide',
   'bon:read',
   'bon:write',
@@ -70,7 +93,7 @@ export const PERMISSIONS = [
 export type Permission = (typeof PERMISSIONS)[number];
 
 /** Tout droit : reserve a l'administrateur. */
-const ADMIN_PERMISSIONS: Permission[] = [...PERMISSIONS];
+const ADMIN_PERMISSIONS: Permission[] = [...PERMISSIONS]; // reservation:approve inclus pour ADMIN
 
 /**
  * MAGASINIER : saisie des mouvements et des bons, comptage d'inventaire.
@@ -129,6 +152,7 @@ const TOP_MANAGEMENT_PERMISSIONS: Permission[] = [
   'inventory:read',
   'loan:read',
   'reservation:read',
+  'reservation:approve',
   'valuation:read',
   'referential:read',
 ];
@@ -201,12 +225,43 @@ const MASTER_DATA_PERMISSIONS: Permission[] = [
   'referential:read',
 ];
 
+/**
+ * VIEWER (« Consultant ») : consultation en lecture seule de toutes les pages, SAUF
+ * Inventaire, Referentiel, Utilisateurs, Parametres et Journal d'audit.
+ *
+ * Aucun droit d'ecriture : il ne voit que, il ne saisit ni ne modifie rien.
+ *
+ * `referential:read` lui est accorde malgre l'absence de l'ecran Referentiel (qui
+ * exige `referential:manage`), pour la meme raison que pour tous les autres profils :
+ * ses ecrans ouvrables (Mouvement, Article, Valorisation, Reservation) ont des
+ * filtres et des formulaires qui se nourrissent des listes de reference. Sans ce
+ * droit, ces listes reviennent en 403 et les deroulants restent VIDES sans la moindre
+ * erreur visible. Il n'a ni `referential:manage` ni `referential:write` : l'ecran
+ * Referentiel lui reste inaccessible, comme demande.
+ *
+ * Il n'a pas non plus `inventory:read` : la page Inventaire est exclue sur demande,
+ * donc ni dans son menu ni accessible par l'URL.
+ */
+const VIEWER_PERMISSIONS: Permission[] = [
+  'dashboard:read',
+  'stock:read',
+  'article:read',
+  'movement:read',
+  'lot:read',
+  'loan:read',
+  'reservation:read',
+  'bon:read',
+  'valuation:read',
+  'referential:read',
+];
+
 export const ROLE_PERMISSIONS: Record<RoleCode, readonly Permission[]> = {
   ADMIN: ADMIN_PERMISSIONS,
   MAGASINIER: MAGASINIER_PERMISSIONS,
   TOP_MANAGEMENT: TOP_MANAGEMENT_PERMISSIONS,
   SALES_ADMIN: SALES_ADMIN_PERMISSIONS,
   MASTER_DATA: MASTER_DATA_PERMISSIONS,
+  VIEWER: VIEWER_PERMISSIONS,
 };
 
 /** Droits effectivement accordes a un role. */

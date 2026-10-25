@@ -6,7 +6,7 @@ import { lotSchema, lotUpdateSchema } from '../validators';
 import { toNumber } from '../utils/decimal';
 import { Prisma } from '@prisma/client';
 import { audit } from '../utils/audit';
-import { conflict, badRequest } from '../utils/apiError';
+import { conflict, badRequest, notFound } from '../utils/apiError';
 import { isLotExhausted, lotStocks } from '../utils/lotStock';
 import { requirePermission } from '../middlewares/permissions';
 
@@ -143,6 +143,48 @@ router.put('/:id', requirePermission('lot:write'), async (req, res) => {
   });
 
   res.json(lot);
+});
+
+// Suppression DEFINITIVE d'un lot, reservee a l'administrateur (`lot:delete`).
+//
+// Garde-fou de tracabilite (D24) : un lot n'est effacable que s'il n'a JAMAIS servi.
+// Des qu'il est reference par un mouvement de stock, une allocation de reservation, une
+// ligne de bon ou une ligne d'inventaire, il porte un historique : le supprimer ferait
+// disparaitre (ou detacherait) la trace du stock. On refuse alors, en renvoyant vers la
+// correction normale (mouvement de sortie / ajustement d'inventaire) plutot que d'effacer.
+// Le cas vise est le lot cree par erreur (mauvais article, doublon) et jamais mouvemente.
+router.delete('/:id', requirePermission('lot:delete'), async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    throw badRequest('Identifiant invalide');
+  }
+
+  const lot = await prisma.lot.findUnique({ where: { id } });
+  if (!lot) throw notFound('Lot introuvable');
+
+  const [moves, allocations, bonLines, inventoryLines] = await Promise.all([
+    prisma.move.count({ where: { lotId: id } }),
+    prisma.reservationAllocation.count({ where: { lotId: id } }),
+    prisma.bonLine.count({ where: { lotId: id } }),
+    prisma.inventoryLine.count({ where: { lotId: id } }),
+  ]);
+
+  if (moves + allocations + bonLines + inventoryLines > 0) {
+    throw conflict(
+      'Suppression impossible : ce lot est déjà utilisé (mouvements de stock, réservations, ' +
+        'bons ou inventaires). Pour corriger le stock, passez par un mouvement de sortie ou un ' +
+        "ajustement d'inventaire : ces opérations restent tracées.",
+    );
+  }
+
+  await prisma.lot.delete({ where: { id } });
+
+  await audit(req.user!.id, 'SUPPRESSION', 'lot', String(id), {
+    articleId: lot.articleId,
+    lotNumber: lot.lotNumber,
+  });
+
+  res.json({ id: lot.id });
 });
 
 export default router;

@@ -131,28 +131,35 @@ async function availabilityRows(
 ): Promise<AvailabilityRows> {
   const article = await db.article.findUnique({
     where: { id: articleId },
-    select: { isLotTracked: true },
+    select: { id: true },
   });
   if (!article) throw notFound('Article introuvable');
 
-  // Article lot-trace : on interroge tous ses lots. Sinon une seule "ligne" sans lot.
-  let lots: { id: number; lotNumber: string; expiryDate: Date | null }[] = [];
-  if (article.isLotTracked) {
-    lots = await db.lot.findMany({
-      where: { articleId },
-      select: { id: true, lotNumber: true, expiryDate: true },
-    });
-  }
+  // Les lots sont charges INDEPENDAMMENT de la case « suivi par lot », et les
+  // mouvements sont pris SANS filtre sur `lotId`.
+  //
+  // Le filtrage precedent derivait du drapeau : article non lot-trace => seuls les
+  // mouvements `lotId: null` etaient comptes, article lot-trace => seuls ceux
+  // rattaches a un de ses lots. C'etait faux dans les deux sens, et c'etait la
+  // cause d'un stock affiche a zero sur la page Reservation :
+  //   - un article dont la case est desactivee (jamais cochee, ou retiree apres
+  //     coup) mais dont les mouvements portent un lot etait entierement exclu ;
+  //   - l'inverse, un article lot-trace sans lot existant, donnait un filtre
+  //     `lotId in []` qui ne retenait rien non plus.
+  // Le stock d'un article ne depend pas de cette case : elle ne gouverne que
+  // l'obligation de preciser un lot a la saisie (voir assertLotRequired) et
+  // l'affichage FEFO. On somme donc TOUS les mouvements actifs de l'article, et
+  // les lots ne servent qu'a enrichir chaque ligne de son numero et sa peremption.
+  const lots = await db.lot.findMany({
+    where: { articleId },
+    select: { id: true, lotNumber: true, expiryDate: true },
+  });
   const lotById = new Map(lots.map((l) => [l.id, l]));
-  const lotIds = lots.map((l) => l.id);
-  const lotFilter: Prisma.MoveWhereInput = article.isLotTracked
-    ? { lotId: { in: lotIds } }
-    : { lotId: null };
 
   // Tous depots et emplacements confondus : la reservation choisit elle-meme les
   // lots (FEFO), le client n'a pas a designer de depot dans le formulaire.
   const moves = await db.move.findMany({
-    where: { articleId, status: 'ACTIF', ...lotFilter },
+    where: { articleId, status: 'ACTIF' },
     select: {
       lotId: true,
       depotId: true,
@@ -336,17 +343,24 @@ async function nextRef(tx: Db, year: number): Promise<string> {
 }
 
 /**
- * Cree une reservation : AUCUN mouvement n'est ecrit, le stock physique ne bouge
- * pas. Ce qui est fige, ce sont les lots et les quantites promises
- * (`reservation_allocations`), choisis par FEFO sur le stock LIBRE.
+ * Cree une reservation :
  *
- * Deux controles bloquants, dans l'ordre :
+ * D33 : distinction DEMANDE / RESERVATION REELLE
+ *   - ADMIN et TOP_MANAGEMENT creent directement une RESERVATION REELLE (ACTIF) :
+ *     des allocations FEFO sont figees, les quantites sont bloquees, exactement
+ *     comme l'ancien comportement.
+ *   - SALES_ADMIN cree une DEMANDE (DEMANDE) : aucune allocation n'est figee, aucun
+ *     mouvement n'est ecrit, le stock n'est PAS bloque. Seuls ADMIN et
+ *     TOP_MANAGEMENT peuvent approuver cette demande pour la transformer en
+ *     reservation reelle.
+ *
+ * Deux controles bloquants, dans l'ordre (uniquement pour les reservations reelles) :
  *   - le stock libre doit couvrir la ligne demandee ;
  *   - le CUMUL des promesses de cet acteur sur ce produit ne doit pas depasser le
  *     plafond (15 % du stock libre, parametre `RESERVATION_PLAFOND_PCT`, regle D21).
  *     Un acteur dispense de ce plafond par la direction generale en est exempt.
  */
-export async function createReservation(input: ReservationInput, userId: number) {
+export async function createReservation(input: ReservationInput, userId: number, creatorRole?: string) {
   if (!input.lines.length) throw badRequest('Ajoutez au moins un article à réserver');
   assertPeriod(dayStart(input.startDate), dayStart(input.endDate));
 
@@ -405,6 +419,12 @@ export async function createReservation(input: ReservationInput, userId: number)
     currencyByArticle.set(a.id, a.currency);
   }
 
+  // D33 : SALES_ADMIN cree une DEMANDE non bloquante. ADMIN et TOP_MANAGEMENT
+  // creent directement une reservation REELLE (ACTIF), avec allocations FEFO.
+  const role = creatorRole ?? '';
+  const isDemande = role === 'SALES_ADMIN';
+  const initialStatus = isDemande ? 'DEMANDE' : 'ACTIF';
+
   const runTx = () =>
     prisma.$transaction(async (tx) => {
       for (const id of articleIds) {
@@ -429,10 +449,24 @@ export async function createReservation(input: ReservationInput, userId: number)
           endDate: dayStart(input.endDate),
           observation: input.observation ?? null,
           createdBy: userId,
+          status: initialStatus,
         },
       });
 
       for (const line of lines) {
+        // D33 : pour une DEMANDE, on ne cree pas d'allocations et on ne bloque pas le stock.
+        // Les controles de disponibilite/plafond ne s'appliquent qu'a une reservation REELLE.
+        if (isDemande) {
+          await tx.reservationLine.create({
+            data: {
+              reservationId: reservation.id,
+              articleId: line.articleId,
+              quantity: toNumber(line.quantity, 3),
+            },
+          });
+          continue;
+        }
+
         // F2 : les totaux portent sur TOUTES les cellules, le controle de
         // disponibilite sur le sous-ensemble de libre > 0. Invertir l'ordre des deux
         // elargirait le plafond sans que la disponibilite bouge.
@@ -533,9 +567,11 @@ export async function createReservation(input: ReservationInput, userId: number)
     startDate: result.startDate,
     endDate: result.endDate,
     lines,
-    // La reservation ne cree aucun mouvement : le tracer evite qu'un tiers suppose
-    // qu'un stock a bouge alors que la promesse est virtuelle.
+    status: isDemande ? 'DEMANDE' : 'ACTIF',
+    type: isDemande ? 'DEMANDE' : 'RESERVATION',
+    // D33 : une DEMANDE ne bloque pas le stock (aucune allocation, aucun mouvement).
     mouvementsCrees: 0,
+    allocationsCrees: isDemande ? 0 : undefined,
   });
   return getReservation(result.id);
 }
@@ -662,7 +698,7 @@ async function closeAsCancelled(
       select: { status: true, ref: true },
     });
     if (!current) throw notFound('Réservation introuvable');
-    if (current.status !== 'ACTIF') {
+    if (current.status !== 'ACTIF' && current.status !== 'DEMANDE') {
       throw badRequest(`Cette réservation est déjà clôturée (${current.status})`);
     }
     return tx.reservation.update({
@@ -678,7 +714,7 @@ async function closeAsCancelled(
   return updated;
 }
 
-/** Cas 1 : l'utilisateur annule la reservation. La promesse s'eteint, rien n'a bougé au stock. */
+/** Cas 1 : l'utilisateur annule la reservation/demande. La promesse s'eteint, rien n'a bougé au stock. */
 export async function cancelReservation(id: bigint, userId: number) {
   const closed = await closeAsCancelled(id, 'ANNULE', 'MANUEL', userId);
   await audit(userId, 'ANNULATION', 'reservation', String(id), { ref: closed.ref, reason: 'MANUEL' });
@@ -715,25 +751,164 @@ interface SortieValidée {
 }
 
 /**
- * Cas 2 : l'utilisateur VALIDE la reservation. C'est le SEUL moment ou le stock
- * bouge : des SORTIES reelles sont creees, une par part promise.
- *
- * Regle 4 du directeur :
- *   - normally, chaque part promise suffit : le reliquat sort du lot fige ;
- *   - si un lot promis a ete ampute par une sortie anterieure autorisee, on le
- *     signale, on sert ce qui reste, puis on rejoue un FEFO sur le stock
- *     ACTUEL pour extraire le manque ;
- *   - si meme ce re-FEFO ne suffit pas, la validation est REFUSEE : la
- *     reservation reste ACTIF et aucun mouvement n'est cree. Mieux vaut une
- *     reservation honoree en retard qu'un stock sorti deux fois.
- *
- * Trace dans le journal d'audit comme une VALIDATION, pour qu'on retrouve d'un
- * coup d'oeil les reservations honorees et leur validateur.
+ * D33 : APPROUVER une DEMANDE -> devient une RESERVATION REELLE (ACTIF)
+ * En fige les lots par FEFO et bloque les quantites (allocations).
  */
-export async function validateReservation(id: bigint, userId: number) {
+export async function approveReservation(id: bigint, userId: number) {
+  const result = await prisma.$transaction(async (tx) => {
+    const current = await tx.reservation.findUnique({
+      where: { id },
+      include: { lines: true },
+    });
+    if (!current) throw notFound('Réservation introuvable');
+    if (!current) throw notFound('Réservation introuvable');
+    if (current.status !== 'DEMANDE') {
+      throw badRequest(`Seule une DEMANDE en attente peut être approuvée (${current.status})`);
+    }
+
+    // D21 : la dispense se lit UNE FOIS
+    const exempt = await isPlafondExempt(current.partnerId, tx);
+    const pct = await plafondPct(tx);
+
+    // Re-verrouiller les articles
+    const articleIds = current.lines.map((l) => l.articleId).sort((a, b) => a - b);
+    for (const aid of articleIds) {
+      await tx.$queryRaw`SELECT id FROM "articles" WHERE id = ${aid} FOR UPDATE`;
+    }
+
+    for (const line of current.lines) {
+      // F2 : les totaux portent sur TOUTES les cellules
+      const { lignes, dejaReserve, libreTotal } = await availabilityRows(line.articleId, tx);
+      const libre = lignes.reduce<Prisma.Decimal>((a, r) => a.add(dec(r.libre)), new Prisma.Decimal(0));
+
+      const art = await tx.article.findUnique({
+        where: { id: line.articleId },
+        select: { code: true, designation: true },
+      });
+
+      if (libre.lessThan(dec(line.quantity))) {
+        throw badRequest(
+          `Stock insuffisant pour l'article ${art?.code ?? line.articleId} - ${art?.designation ?? ''} ` +
+            `(libre : ${toNumber(libre, 3)}${dejaReserve.greaterThan(0) ? `, dont ${toNumber(dejaReserve, 3)} déjà réservé` : ''})`,
+        );
+      }
+
+      if (!exempt) {
+        const cumulActeur =
+          reservedByArticle(
+            await activeAllocations(
+              { articleIds: [line.articleId], partnerId: current.partnerId },
+              tx,
+            ),
+          ).get(line.articleId) ?? new Prisma.Decimal(0);
+        const etat = computePlafond({
+          base: libreTotal,
+          cumulActuel: cumulActeur,
+          demande: line.quantity,
+          pct,
+        });
+        if (etat.depasse) {
+          throw badRequest(
+            `Plafond de réservation dépassé pour cet acteur sur l'article ${art?.code ?? line.articleId} - ${art?.designation ?? ''} : ` +
+              `maximum ${etat.pct} % du stock libre, soit ${etat.plafond}`,
+            { plafond: etat },
+          );
+        }
+      }
+
+      // FEFO : figer les lots
+      let reste = dec(line.quantity);
+      for (const row of lignes) {
+        if (reste.lte(0)) break;
+        const part = dec(row.libre).greaterThan(reste) ? reste : dec(row.libre);
+        await tx.reservationAllocation.create({
+          data: {
+            reservationId: id,
+            reservationLineId: line.id,
+            articleId: line.articleId,
+            lotId: row.lotId,
+            depotId: row.depotId,
+            locationId: row.locationId,
+            quantity: toNumber(part, 3),
+          },
+        });
+        reste = reste.sub(part);
+      }
+    }
+
+    return tx.reservation.update({
+      where: { id },
+      data: { status: 'ACTIF' },
+    });
+  });
+
+  await audit(userId, 'VALIDATION', 'reservation', String(id), {
+    ref: result.ref,
+    action: 'APPROBATION_DEMANDE',
+    status: 'ACTIF',
+    allocationsCrees: true,
+  });
+
+  return getReservation(id);
+}
+
+/**
+ * D33 : REFUSER une DEMANDE -> passe en REFUSE, ne devient jamais reelle.
+ * Reserve a ADMIN et TOP_MANAGEMENT.
+ */
+export async function refuseReservation(id: bigint, userId: number) {
+  const updated = await prisma.$transaction(async (tx) => {
+    const current = await tx.reservation.findUnique({
+      where: { id },
+      select: { status: true, ref: true },
+    });
+    if (!current) throw notFound('Réservation introuvable');
+    if (current.status !== 'DEMANDE') {
+      throw badRequest(`Seule une DEMANDE en attente peut être refusée (${current.status})`);
+    }
+    return tx.reservation.update({
+      where: { id },
+      data: {
+        status: 'REFUSE',
+        closedBy: userId,
+        closedAt: new Date(),
+        closeReason: 'REFUSE',
+      },
+    });
+  });
+
+  await audit(userId, 'REFUS', 'reservation', String(id), {
+    ref: updated.ref,
+    action: 'REFUS_DEMANDE',
+    status: 'REFUSE',
+  });
+
+  return getReservation(id);
+}
+
+/**
+ * D34 : Validation partielle autorisee.
+ * `partial` = tableau { lineId, quantityTaken } pour indiquer ce qui est reellement pris.
+ * Si absent ou vide, validation COMPLETE (comportement historique).
+ */
+export async function validateReservation(
+  id: bigint,
+  userId: number,
+  partial?: Array<{ lineId: string | bigint; quantityTaken: number }>,
+) {
   const notes: string[] = [];
   const amputations: Array<{ reservationId: string; allocationId: string; lotNumber: string | null; quantite: number }> = [];
   const reconstitutions: Array<{ articleId: number; lotNumber: string | null; quantity: number }> = [];
+
+  const isPartial = Array.isArray(partial) && partial.length > 0;
+  const takenByLine = new Map<string, Prisma.Decimal>();
+  if (isPartial) {
+    for (const p of partial) {
+      const qty = dec(p.quantityTaken);
+      if (qty.lessThan(0)) throw badRequest('Les quantités prises ne peuvent pas être négatives');
+      takenByLine.set(String(p.lineId), qty);
+    }
+  }
 
   const updated = await prisma.$transaction(async (tx) => {
     const current = await tx.reservation.findUnique({
@@ -742,7 +917,23 @@ export async function validateReservation(id: bigint, userId: number) {
     });
     if (!current) throw notFound('Réservation introuvable');
     if (current.status !== 'ACTIF') {
-      throw badRequest(`Cette réservation est déjà clôturée (${current.status})`);
+      throw badRequest(`Seule une réservation RÉELLE approuvée peut être validée pour sortie (${current.status})`);
+    }
+
+    const reservationLines = await tx.reservationLine.findMany({
+      where: { reservationId: id },
+      select: { id: true, articleId: true, quantity: true },
+    });
+    const lineById = new Map(reservationLines.map((l) => [String(l.id), l]));
+
+    if (isPartial) {
+      for (const [lineId, taken] of takenByLine.entries()) {
+        const line = lineById.get(lineId);
+        if (!line) throw badRequest('Ligne de réservation introuvable');
+        if (taken.greaterThan(dec(line.quantity))) {
+          throw badRequest(`La quantité prise ne peut pas dépasser la quantité réservée pour la ligne ${lineId}`);
+        }
+      }
     }
 
     const sortieId = (await tx.moveType.findUniqueOrThrow({ where: { code: MoveTypeCode.SORTIE } })).id;
@@ -758,6 +949,7 @@ export async function validateReservation(id: bigint, userId: number) {
       where: { reservationId: id },
       select: {
         id: true,
+        reservationLineId: true,
         articleId: true,
         lotId: true,
         depotId: true,
@@ -766,8 +958,34 @@ export async function validateReservation(id: bigint, userId: number) {
         takenQuantity: true,
         lot: { select: { lotNumber: true } },
       },
-      orderBy: { id: 'asc' },
+      orderBy: [{ reservationLineId: 'asc' }, { id: 'asc' }],
     });
+
+    // Pour validation partielle : déterminer combien doit être pris par allocation
+    // en répartissant la quantité prise par ligne selon l'ordre FEFO (ordre des allocations)
+    const toTakeByAllocation = new Map<string, Prisma.Decimal>();
+    if (isPartial) {
+      // Regrouper allocations par ligne
+      const allocationsByLine = new Map<string, typeof allocations>();
+      for (const a of allocations) {
+        const key = String(a.reservationLineId);
+        if (!allocationsByLine.has(key)) allocationsByLine.set(key, []);
+        allocationsByLine.get(key)!.push(a);
+      }
+      for (const [lineId, lineAllocs] of allocationsByLine.entries()) {
+        let remaining = takenByLine.get(lineId) ?? new Prisma.Decimal(0);
+        for (const alloc of lineAllocs) {
+          if (remaining.lte(0)) {
+            toTakeByAllocation.set(String(alloc.id), new Prisma.Decimal(0));
+            continue;
+          }
+          const allocQty = dec(alloc.quantity);
+          const take = remaining.greaterThan(allocQty) ? allocQty : remaining;
+          toTakeByAllocation.set(String(alloc.id), take);
+          remaining = remaining.sub(take);
+        }
+      }
+    }
 
     const sorties: SortieValidée[] = [];
 
@@ -785,7 +1003,12 @@ export async function validateReservation(id: bigint, userId: number) {
     for (const a of allocations) {
       await tx.$queryRaw`SELECT id FROM "articles" WHERE id = ${a.articleId} FOR UPDATE`;
 
-      const restant = dec(a.quantity).sub(dec(a.takenQuantity));
+      const restantApresAmput = dec(a.quantity).sub(dec(a.takenQuantity));
+      // D34 : en validation partielle, on ne prend que la quantité réellement confirmée
+      const aPrelever = isPartial
+        ? (toTakeByAllocation.get(String(a.id)) ?? new Prisma.Decimal(0)).sub(dec(a.takenQuantity))
+        : restantApresAmput;
+      const restant = aPrelever.greaterThan(0) ? aPrelever : new Prisma.Decimal(0);
       const cell = {
         articleId: a.articleId,
         lotId: a.lotId,
@@ -942,16 +1165,19 @@ export async function validateReservation(id: bigint, userId: number) {
       });
     }
 
+    const finalStatus = isPartial ? 'PARTIELLEMENT_REALISE' : 'REALISE';
+    const finalCloseReason = isPartial ? 'VALIDEE_PARTIELLE' : 'VALIDEE';
     return tx.reservation.update({
       where: { id },
-      data: { status: 'REALISE', closedBy: userId, closedAt: today, closeReason: 'VALIDEE' },
+      data: { status: finalStatus, closedBy: userId, closedAt: today, closeReason: finalCloseReason },
     });
   });
 
+  const isPartialResult = updated.status === 'PARTIELLEMENT_REALISE';
   await audit(userId, 'VALIDATION', 'reservation', String(id), {
     ref: updated.ref,
-    action: 'VALIDATION',
-    status: 'REALISE',
+    action: isPartialResult ? 'VALIDATION_PARTIELLE' : 'VALIDATION',
+    status: updated.status,
     sortiesCreees: true,
     notes,
     ...(amputations.length ? { amputations } : {}),
@@ -962,27 +1188,27 @@ export async function validateReservation(id: bigint, userId: number) {
 }
 
 /**
- * Expire une reservation dans SA propre transaction. Renvoie false si elle etait deja
+ * Expire une reservation/demande dans SA propre transaction. Renvoie false si elle etait deja
  * close (par un utilisateur ou par un autre balayage) : deux balayages qui se croisent
  * ne peuvent donc pas se generer d'exception, l'un des deux ignore simplement la ligne.
  */
 async function expireOne(tx: Db, id: bigint): Promise<boolean> {
   const closed = await tx.reservation.updateMany({
-    where: { id, status: 'ACTIF' },
+    where: { id, status: { in: ['ACTIF', 'DEMANDE'] } },
     data: { status: 'EXPIRE', closedAt: new Date(), closedBy: null, closeReason: 'EXPIRE' },
   });
   return closed.count > 0;
 }
 
 /**
- * Cas 3 : la date de fin est depassee -> annulation automatique. La promesse
- * s'eteint ; le stock n'avait jamais bouge. Appele a chaque lecture des
- * reservations.
+ * Cas 3 : la date de fin est depassee -> annulation automatique.
+ * D33 : les DEMANDES en attente sont aussi expirees si leur date de fin est atteinte.
+ * Appele a chaque lecture des reservations.
  */
 export async function expireReservations() {
   const limit = todayStart();
   const due = await prisma.reservation.findMany({
-    where: { status: 'ACTIF', endDate: { lt: limit } },
+    where: { status: { in: ['ACTIF', 'DEMANDE'] }, endDate: { lt: limit } },
     select: { id: true },
   });
   let expired = 0;
@@ -1017,20 +1243,25 @@ export async function synthesis() {
   await expireReservations();
   const today = todayStart();
   const dans7 = new Date(today.getTime() + 7 * 24 * 3600 * 1000);
-  const [actives, expirees, expire7, realises] = await Promise.all([
+  const [demandesEnAttente, actives, refusees, expirees, expire7, realises] = await Promise.all([
+    prisma.reservation.count({ where: { status: 'DEMANDE' } }),
     prisma.reservation.count({ where: { status: 'ACTIF' } }),
+    prisma.reservation.count({ where: { status: 'REFUSE' } }),
     prisma.reservation.count({ where: { status: 'EXPIRE' } }),
     prisma.reservation.count({ where: { status: 'ACTIF', endDate: { gte: today, lt: dans7 } } }),
     prisma.reservation.count({ where: { status: 'REALISE' } }),
   ]);
   // Quantites promisees, par article : alimente la ligne "deja reserve" de l'etat de stock.
+  // D33 : seules les reservations REELLES (ACTIF) bloquent le stock.
   const parts = await activeAllocations();
   const parArticle = new Map<number, Prisma.Decimal>();
   for (const p of parts) {
     parArticle.set(p.articleId, (parArticle.get(p.articleId) ?? new Prisma.Decimal(0)).add(p.remaining));
   }
   return {
+    demandesEnAttente,
     actives,
+    refusees,
     expirees,
     expire7,
     realises,

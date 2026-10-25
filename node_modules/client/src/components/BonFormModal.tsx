@@ -1,11 +1,11 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { articlesApi, bonsApi, lotsApi, referentialApi, type BonPayload } from '../services/endpoints';
 import { errorMessage, useAsync } from '../hooks/useAsync';
-import { ErrorMessage, Field, Modal } from './ui';
+import { ErrorMessage, Field, Modal, SearchSelect } from './ui';
 import type { BonType, Lot } from '../types';
 import { formatDate, todayInput } from '../utils/format';
 import { CURRENCY_OPTIONS } from '../utils/currencies';
-import { renderPartnerOptions } from './PartnerSelectOptions';
+import { articleSearchOptions, partnerSearchOptions } from '../utils/searchOptions';
 
 interface LineDraft {
   articleId: string;
@@ -275,13 +275,12 @@ export function BonFormModal({
           </Field>
         ) : null}
         <Field label="Acteur">
-          <select
-            value={form.partnerId}
-            onChange={(e) => setForm((prev) => ({ ...prev, partnerId: e.target.value }))}
-          >
-            <option value="">—</option>
-            {renderPartnerOptions(partners.data)}
-          </select>
+          <SearchSelect
+            options={partnerSearchOptions(partners.data)}
+            value={form.partnerId ? Number(form.partnerId) : null}
+            onChange={(id) => setForm((prev) => ({ ...prev, partnerId: id ? String(id) : '' }))}
+            placeholder="Rechercher un acteur…"
+          />
         </Field>
 
         <div className="form-section-title">
@@ -292,14 +291,12 @@ export function BonFormModal({
         </div>
         {lines.map((line, index) => (
           <div className="line-editor" key={index}>
-            <select value={line.articleId} onChange={(e) => handleArticleChange(index, e.target.value)} required>
-              <option value="">Article…</option>
-              {articles.data?.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.code} — {a.designation}
-                </option>
-              ))}
-            </select>
+            <SearchSelect
+              options={articleSearchOptions(articles.data)}
+              value={line.articleId ? Number(line.articleId) : null}
+              onChange={(id) => handleArticleChange(index, id ? String(id) : '')}
+              placeholder="Article…"
+            />
             <select
               value={line.lotId}
               onChange={(e) => handleLotChange(index, e.target.value)}

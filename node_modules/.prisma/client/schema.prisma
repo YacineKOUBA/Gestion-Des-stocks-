@@ -29,6 +29,9 @@ enum RoleCode {
   // Tableau de bord, Etat de stock, Articles, Mouvements, Lots & peremptions,
   // Prets/Emprunts, Reservations, Valorisation.
   MASTER_DATA
+  // Consultant (VIEWER) : consultation en lecture seule de toutes les pages, SAUF
+  // Inventaire, Referentiel, Utilisateurs, Parametres et Journal d'audit.
+  VIEWER
 }
 
 enum PartnerType {
@@ -63,6 +66,7 @@ enum MoveTypeCode {
   PERTE
   AJUSTEMENT
   RETOUR
+  INVENTAIRE
   // D20 : `RESERVATION` a ete supprime. Une reservation ne cree plus de mouvement
   // avant sa validation ; elle fige des lots dans `reservation_allocations`.
   // Ce type faisait entrer de fausses sorties dans le stock et dans la consommation
@@ -457,9 +461,12 @@ model Move {
 //     que les reservations ACTIF.
 
 enum ReservationStatus {
+  DEMANDE
   ACTIF
   REALISE
+  PARTIELLEMENT_REALISE
   ANNULE
+  REFUSE
   EXPIRE
 }
 

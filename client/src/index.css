@@ -23,6 +23,8 @@
   --info-bg: #e5e7eb;
   --neutral: #6b7280;
   --neutral-bg: #f1f2f4;
+  --blue: #1d4ed8;
+  --blue-bg: #eff6ff;
   --shadow: 0 1px 3px rgba(20, 22, 28, 0.08), 0 1px 2px rgba(20, 22, 28, 0.04);
   font-family: 'Segoe UI', system-ui, -apple-system, Roboto, sans-serif;
   color: var(--text);
@@ -506,6 +508,42 @@ input[type='checkbox'] {
   color: var(--neutral);
 }
 
+/* Drapeaux de peremption : fonds FONCE et ecriture blanche pour un contraste net
+   entre les quatre niveaux. Volontairement separes des `.badge-*` (teintes douces)
+   qui sont partages par les statuts, observations et utilisateurs. */
+.lot-flag {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #fff;
+  /* Contour noir fin (text-shadow dans 4 directions) sur TOUS les drapeaux : il
+     detache le texte blanc quel que soit le fond, et reste indispensable sur le
+     jaune vif ou le blanc seul serait illisible. */
+  text-shadow:
+    -1px -1px 0 #000,
+    1px -1px 0 #000,
+    -1px 1px 0 #000,
+    1px 1px 0 #000;
+}
+.lot-flag-perime,
+.lot-flag-rouge {
+  background: #b91c1c; /* rouge fonce */
+}
+.lot-flag-orange {
+  background: #ea580c; /* orange lumineux (moins fonce qu'avant) */
+}
+.lot-flag-jaune {
+  background: #ffff00; /* jaune vif demande */
+}
+.lot-flag-vert {
+  background: #15803d; /* vert fonce */
+}
+.lot-flag-unknown {
+  background: #4b5563; /* neutre fonce (code de drapeau inconnu) */
+}
+
 /* Alerts */
 .alert {
   padding: 10px 12px;
@@ -694,9 +732,14 @@ input[type='checkbox'] {
 }
 .line-editor {
   display: grid;
-  grid-template-columns: minmax(220px, 2fr) minmax(120px, 1fr) minmax(90px, 0.8fr) minmax(120px, 1fr) minmax(180px, 1.5fr) auto;
+  grid-template-columns: minmax(200px, 2fr) minmax(110px, 1fr) minmax(80px, 0.8fr) minmax(100px, 1fr) minmax(160px, 1.5fr) auto;
   gap: 8px;
-  overflow-x: auto;
+  /* Le champ Article utilise une liste de suggestions : `overflow-x: auto` ferait
+     de la ligne un conteneur de defilement qui rognerait ce menu. On laisse donc
+     deborder la ligne (la fenetre modale gere le defilement). En dessous du point
+     de rupture ci-dessous, on revient au defilement horizontal, indispensable
+     pour les petits ecrans. */
+  overflow: visible;
   align-items: center;
 }
 @media (max-width: 720px) {
@@ -705,6 +748,7 @@ input[type='checkbox'] {
   }
   .line-editor {
     grid-template-columns: minmax(160px, 1fr) minmax(100px, 0.8fr) minmax(90px, 0.7fr) minmax(110px, 0.9fr) minmax(150px, 1.2fr) auto;
+    overflow-x: auto;
   }
 }
 
@@ -771,14 +815,22 @@ input[type='checkbox'] {
 .brand-large .brand-logo {
   height: 76px;
 }
-.brand-large .brand-text {
-  color: var(--text);
-}
-.brand-large .brand-text small {
-  color: var(--muted);
-}
 .login-card h1 {
   text-align: center;
+  /* Le titre reprend le libelle de l'application, en noir, a la taille inchangee
+     du h1 global (22px). La couleur explicite evite de dependre d'un futur style. */
+  color: #000;
+}
+/* Repere de version, juste sous « Gestion des stocks ». La marge negative annule
+   le gap de 16px de .login-card : la mention doit coller au titre, pas flotter
+   au milieu de l'ecran ou elle chevaucherait le champ Identifiant. */
+.login-version {
+  text-align: center;
+  margin-top: -12px;
+  color: #9ca0a8;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
 }
 
 /* Misc */
@@ -804,6 +856,17 @@ input[type='checkbox'] {
 .qty-out {
   color: var(--red);
   font-weight: 600;
+}
+/* Colonne ITEM (Mouvements) : numerotation de ligne, distincte des autres colonnes
+   par une teinte bleue douce. Fond leger + chiffres bleus alignes (tabular-nums). */
+.data-table th.col-item,
+.data-table td.col-item {
+  background: var(--blue-bg);
+}
+.data-table td.col-item {
+  color: var(--blue);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 @keyframes spin {
   to {

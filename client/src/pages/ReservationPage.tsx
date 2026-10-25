@@ -10,24 +10,33 @@ import { formatDate, formatDateTime } from '../utils/format';
 import { useAuth } from '../context/AuthContext';
 
 const STATUS_LABEL: Record<ReservationStatus, string> = {
-  ACTIF: 'Active',
+  DEMANDE: 'Demande en attente',
+  ACTIF: 'Active (réelle)',
   REALISE: 'Validée',
+  PARTIELLEMENT_REALISE: 'Partiellement validée',
   ANNULE: 'Annulée',
+  REFUSE: 'Refusée',
   EXPIRE: 'Expirée',
 };
 
 const STATUS_TONE: Record<ReservationStatus, string> = {
+  DEMANDE: 'badge-warning',
   ACTIF: 'badge-info',
   REALISE: 'badge-green',
+  PARTIELLEMENT_REALISE: 'badge-warning',
   ANNULE: 'badge-red',
+  REFUSE: 'badge-red',
   EXPIRE: 'badge-neutral',
 };
 
 const FILTER_OPTIONS: { value: string; label: string }[] = [
   { value: '', label: 'Toutes' },
+  { value: 'DEMANDE', label: 'Demandes en attente' },
   { value: 'ACTIF', label: 'Actives' },
   { value: 'REALISE', label: 'Validées' },
+  { value: 'PARTIELLEMENT_REALISE', label: 'Partiellement validées' },
   { value: 'ANNULE', label: 'Annulées' },
+  { value: 'REFUSE', label: 'Refusées' },
   { value: 'EXPIRE', label: 'Expirées' },
 ];
 
@@ -43,23 +52,88 @@ export function ReservationPage() {
   const reservations = useAsync(() => reservationsApi.list({ status: statut || undefined }), [statut]);
   const synthese = useAsync(() => reservationsApi.synthesis(), []);
 
-  async function runAction(id: string, action: 'valider' | 'annuler', label: string) {
+  async function runAction(id: string, action: 'valider' | 'annuler' | 'approuver' | 'refuser', label: string, reservation?: Reservation) {
+    if (action === 'valider') {
+      // D34 : demander si prise intégrale ou partielle
+      const takenAll = window.confirm('La réservation a-t-elle été intégralement prise ?\n\nOK = Oui (prise totale)\nAnnuler = Non (prise partielle)');
+      if (takenAll) {
+        if (!window.confirm(`Valider la réservation ${id} ?`)) return;
+        setBusy(id);
+        setActionError(null);
+        setNotes([]);
+        try {
+          const r = await reservationsApi.validate(id);
+          if (r.notes?.length) setNotes(r.notes);
+          setDetail((prev) => (prev && prev.id === (r as any).id ? r : prev));
+          reservations.reload();
+          synthese.reload();
+          return;
+        } catch (err) {
+          setActionError(errorMessage(err, 'Opération impossible'));
+          return;
+        } finally {
+          setBusy(null);
+        }
+      } else {
+        // Validation partielle : demander les quantités réellement prises par ligne
+        const res = reservation ?? detail;
+        if (!res?.lines?.length) {
+          setActionError('Aucune ligne à valider partiellement');
+          return;
+        }
+        const partial: Array<{ lineId: string | number; quantityTaken: number }> = [];
+        for (const line of res.lines) {
+          const reserved = Number(line.quantity ?? 0);
+          const code = (line as any).code ?? (line as any).article?.code ?? String(line.articleId);
+          const designation = (line as any).designation ?? (line as any).article?.designation ?? '';
+          const answer = window.prompt(
+            `Quantité réellement prise pour ${code} - ${designation}\nRéservée : ${reserved}\n(laisser vide ou 0 pour ne rien prendre)`,
+            String(reserved),
+          );
+          if (answer === null) return; // annulé
+          const taken = Number(String(answer).replace(',', '.'));
+          if (isNaN(taken) || taken < 0) {
+            setActionError('Quantité invalide');
+            return;
+          }
+          if (taken > reserved + 1e-9) {
+            setActionError('La quantité prise ne peut pas dépasser la quantité réservée');
+            return;
+          }
+          partial.push({ lineId: line.id, quantityTaken: taken });
+        }
+        if (!window.confirm(`Valider partiellement la réservation ${id} ?\nLes quantités restantes seront automatiquement libérées.`)) return;
+        setBusy(id);
+        setActionError(null);
+        setNotes([]);
+        try {
+          const r = await reservationsApi.validate(id, partial);
+          if ((r as any).notes?.length) setNotes((r as any).notes);
+          setDetail((prev) => (prev && prev.id === (r as any).id ? r : prev));
+          reservations.reload();
+          synthese.reload();
+          return;
+        } catch (err) {
+          setActionError(errorMessage(err, 'Opération impossible'));
+          return;
+        } finally {
+          setBusy(null);
+        }
+      }
+    }
+
     if (!window.confirm(`${label} la réservation ${id} ?`)) return;
     setBusy(id);
     setActionError(null);
     setNotes([]);
     try {
-      // D20 : la validation transforme la promesse en SORTIES reelles. Une note
-      // signale les lots amputes avant validation, et la validation est refusee
-      // (400) si le stock ne couvre plus la promesse.
-      // Les deux appels sont separes : `validate` renvoie des notes, `cancel` non,
-      // et un ternaire sur un appel et une union rendait `notes` illisible.
+      // D33 : une DEMANDE doit etre approuvee pour devenir une reservation REELLE.
       let updated: Reservation;
       let notesValidation: string[] | undefined;
-      if (action === 'valider') {
-        const r = await reservationsApi.validate(id);
-        updated = r;
-        notesValidation = r.notes;
+      if (action === 'approuver') {
+        updated = await reservationsApi.approve(id);
+      } else if (action === 'refuser') {
+        updated = await reservationsApi.refuse(id);
       } else {
         updated = await reservationsApi.cancel(id);
       }
@@ -107,17 +181,58 @@ export function ReservationPage() {
       header: 'Statut',
       render: (r) => <Badge tone={STATUS_TONE[r.status]}>{STATUS_LABEL[r.status]}</Badge>,
     },
-    // D19 : valider et annuler ne relevent plus du meme droit. Valider transforme
-    // les mouvements de blocage en SORTIES (sortie reelle du stock), annuler rend
-    // simplement le stock : un profil peut donc annuler sans pouvoir valider.
-    ...(can('reservation:write') || can('reservation:decide')
+    // D19/D33 : approuver une DEMANDE (ADMIN/TOP_MGMT), valider une RESERVATION REELLE
+    // (ADMIN), annuler DEMANDE ou RESERVATION (selon droit).
+    ...(can('reservation:write') || can('reservation:decide') || can('reservation:approve')
       ? [
           {
             key: 'actions',
             header: '',
             className: 'right',
             render: (r: Reservation) =>
-              r.status === 'ACTIF' ? (
+              r.status === 'DEMANDE' ? (
+                <div className="row-actions">
+                  {can('reservation:approve') ? (
+                    <>
+                      <button
+                        type="button"
+                        className="btn btn-small btn-primary"
+                        disabled={busy === r.id}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void runAction(r.id, 'approuver', 'Approuver');
+                        }}
+                      >
+                        Approuver
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-small btn-danger"
+                        disabled={busy === r.id}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void runAction(r.id, 'refuser', 'Refuser');
+                        }}
+                      >
+                        Refuser
+                      </button>
+                    </>
+                  ) : null}
+                  {can('reservation:write') && !can('reservation:approve') ? (
+                    <button
+                      type="button"
+                      className="btn btn-small btn-danger"
+                      disabled={busy === r.id}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void runAction(r.id, 'annuler', 'Annuler');
+                      }}
+                    >
+                      Annuler
+                    </button>
+                  ) : null}
+                </div>
+              ) : r.status === 'ACTIF' ? (
                 <div className="row-actions">
                   {can('reservation:decide') ? (
                     <button
@@ -126,7 +241,7 @@ export function ReservationPage() {
                       disabled={busy === r.id}
                       onClick={(e) => {
                         e.stopPropagation();
-                        void runAction(r.id, 'valider', 'Valider');
+                        void runAction(r.id, 'valider', 'Valider', r);
                       }}
                     >
                       Valider
@@ -148,7 +263,11 @@ export function ReservationPage() {
                 </div>
               ) : (
                 <span className="muted">
-                  {r.closeReason === 'EXPIRE' ? 'Expirée automatiquement' : '—'}
+                  {r.closeReason === 'EXPIRE'
+                    ? 'Expirée automatiquement'
+                    : r.closeReason === 'REFUSE'
+                      ? 'Refusée par la direction'
+                      : '—'}
                 </span>
               ),
           },
@@ -172,9 +291,17 @@ export function ReservationPage() {
 
       {synthese.data ? (
         <div className="kpi-grid">
+          <div className="kpi kpi-warning">
+            <span className="kpi-value">{synthese.data.demandesEnAttente ?? 0}</span>
+            <span className="kpi-label">Demandes en attente</span>
+          </div>
           <div className="kpi kpi-info">
             <span className="kpi-value">{synthese.data.actives}</span>
             <span className="kpi-label">Réservations actives</span>
+          </div>
+          <div className="kpi kpi-danger">
+            <span className="kpi-value">{synthese.data.refusees ?? 0}</span>
+            <span className="kpi-label">Demandes refusées</span>
           </div>
           <div className="kpi kpi-orange">
             <span className="kpi-value">{synthese.data.expire7}</span>
@@ -406,7 +533,7 @@ export function ReservationPage() {
                   type="button"
                   className="btn btn-primary"
                   disabled={busy === detail.id}
-                  onClick={() => void runAction(detail.id, 'valider', 'Valider')}
+                  onClick={() => void runAction(detail.id, 'valider', 'Valider', detail)}
                 >
                   Valider
                 </button>

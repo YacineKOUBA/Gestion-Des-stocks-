@@ -38,12 +38,9 @@ export function LoginPage() {
       <form className="login-card" onSubmit={handleSubmit}>
         <div className="brand brand-large">
           <img className="brand-logo" src="/logo-gd-alpha.png" alt="GD Trading" />
-          <span className="brand-text">
-            GD Trading
-            <small>Gestion des stocks</small>
-          </span>
         </div>
-        <h1>Connexion</h1>
+        <h1>Gestion des stocks</h1>
+        <div className="login-version">V 10/26</div>
         <ErrorMessage message={error} />
         <label className="field">
           <span className="field-label">Identifiant</span>

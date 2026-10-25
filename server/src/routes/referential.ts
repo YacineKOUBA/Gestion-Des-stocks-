@@ -25,14 +25,26 @@ const REFERENCE_MODELS = [
 ] as const;
 type ReferenceModel = (typeof REFERENCE_MODELS)[number];
 
+/** Types d'acteur acceptes. Source unique, partagee par la lecture et la creation. */
+const PARTNER_TYPES = ['FOURNISSEUR', 'CLIENT', 'ENTITE', 'AUTRE'] as const;
+type PartnerTypeValue = (typeof PARTNER_TYPES)[number];
+
 async function createRef(
   model: ReferenceModel,
   code: string,
   label: string,
   categoryId?: number | null,
+  partnerType?: PartnerTypeValue,
 ) {
   switch (model) {
     case 'family': {
+      // D32 : detection de doublons pour assurer la coherence
+      if (code && code !== '-') {
+        const existing = await prisma.family.findFirst({ where: { code: { equals: code, mode: 'insensitive' } } });
+        if (existing) throw conflict(`Une famille avec le code « ${code} » existe déjà.`);
+      }
+      const existingByLabel = await prisma.family.findFirst({ where: { label: { equals: label, mode: 'insensitive' } } });
+      if (existingByLabel) throw conflict(`Une famille avec le libellé « ${label} » existe déjà.`);
       // Les familles sont rattachees a la categorie "Matiere premiere" (decision utilisateur).
       let catId = categoryId ?? null;
       if (!catId) {
@@ -41,23 +53,65 @@ async function createRef(
       }
       return prisma.family.create({ data: { code, label, categoryId: catId } });
     }
-    case 'unit':
-      return prisma.unit.create({ data: { code, label } });
-    case 'packaging':
-      return prisma.packaging.create({ data: { code, label } });
-    case 'origin':
-      return prisma.origin.create({ data: { code, label } });
-    case 'depot':
-      return prisma.depot.create({ data: { code, label } });
-    case 'location':
-      return prisma.location.create({ data: { code, label } });
-    case 'partner': {
-      const type = (req.query.type as string | undefined) || (req.body?.type as string | undefined);
-      let partnerType: 'FOURNISSEUR' | 'CLIENT' | 'ENTITE' | 'AUTRE' = 'ENTITE';
-      if (type && ['FOURNISSEUR', 'CLIENT', 'ENTITE', 'AUTRE'].includes(type)) {
-        partnerType = type as any;
+    case 'unit': {
+      if (code && code !== '-') {
+        const existing = await prisma.unit.findFirst({ where: { code: { equals: code, mode: 'insensitive' } } });
+        if (existing) throw conflict(`Une unité avec le code « ${code} » existe déjà.`);
       }
-      return prisma.partner.create({ data: { name: label, type: partnerType } });
+      const existingByLabel = await prisma.unit.findFirst({ where: { label: { equals: label, mode: 'insensitive' } } });
+      if (existingByLabel) throw conflict(`Une unité avec le libellé « ${label} » existe déjà.`);
+      return prisma.unit.create({ data: { code, label } });
+    }
+    case 'packaging': {
+      if (code && code !== '-') {
+        const existing = await prisma.packaging.findFirst({ where: { code: { equals: code, mode: 'insensitive' } } });
+        if (existing) throw conflict(`Un conditionnement avec le code « ${code} » existe déjà.`);
+      }
+      const existingByLabel = await prisma.packaging.findFirst({ where: { label: { equals: label, mode: 'insensitive' } } });
+      if (existingByLabel) throw conflict(`Un conditionnement avec le libellé « ${label} » existe déjà.`);
+      return prisma.packaging.create({ data: { code, label } });
+    }
+    case 'origin': {
+      if (code && code !== '-') {
+        const existing = await prisma.origin.findFirst({ where: { code: { equals: code, mode: 'insensitive' } } });
+        if (existing) throw conflict(`Une origine avec le code « ${code} » existe déjà.`);
+      }
+      const existingByLabel = await prisma.origin.findFirst({ where: { label: { equals: label, mode: 'insensitive' } } });
+      if (existingByLabel) throw conflict(`Une origine avec le libellé « ${label} » existe déjà.`);
+      return prisma.origin.create({ data: { code, label } });
+    }
+    case 'depot': {
+      if (code && code !== '-') {
+        const existing = await prisma.depot.findFirst({ where: { code: { equals: code, mode: 'insensitive' } } });
+        if (existing) throw conflict(`Un dépôt avec le code « ${code} » existe déjà.`);
+      }
+      const existingByLabel = await prisma.depot.findFirst({ where: { label: { equals: label, mode: 'insensitive' } } });
+      if (existingByLabel) throw conflict(`Un dépôt avec le libellé « ${label} » existe déjà.`);
+      return prisma.depot.create({ data: { code, label } });
+    }
+    case 'location': {
+      if (code && code !== '-') {
+        const existing = await prisma.location.findFirst({ where: { code: { equals: code, mode: 'insensitive' } } });
+        if (existing) throw conflict(`Un emplacement avec le code « ${code} » existe déjà.`);
+      }
+      const existingByLabel = await prisma.location.findFirst({ where: { label: { equals: label, mode: 'insensitive' } } });
+      if (existingByLabel) throw conflict(`Un emplacement avec le libellé « ${label} » existe déjà.`);
+      return prisma.location.create({ data: { code, label } });
+    }
+    case 'partner': {
+      // D32 : detection de doublons pour les acteurs (par nom et type)
+      const pType = partnerType ?? 'ENTITE';
+      const existingByName = await prisma.partner.findFirst({ 
+        where: { 
+          name: { equals: label, mode: 'insensitive' },
+          type: pType,
+          isActive: true 
+        } 
+      });
+      if (existingByName) throw conflict(`Un ${pType === 'CLIENT' ? 'client' : pType === 'FOURNISSEUR' ? 'fournisseur' : 'acteur'} avec ce nom existe déjà.`);
+      // `partnerType` vient de l'appelant (corps ou requete). Un type absent ou inconnu
+      // retombe sur ENTITE, comportement historique conserve.
+      return prisma.partner.create({ data: { name: label, type: partnerType ?? 'ENTITE' } });
     }
   }
 }
@@ -79,8 +133,8 @@ router.get('/locations', async (_req, res) =>
 router.get('/partners', async (req, res) => {
   const type = req.query.type as string | undefined;
   const where: any = { isActive: true };
-  if (type && ['FOURNISSEUR', 'CLIENT', 'ENTITE', 'AUTRE'].includes(type)) {
-    where.type = type as any;
+  if (type && PARTNER_TYPES.includes(type as PartnerTypeValue)) {
+    where.type = type;
   }
   res.json(await prisma.partner.findMany({ where, orderBy: { name: 'asc' } }));
 });
@@ -94,7 +148,14 @@ router.post('/:model', requirePermission('referential:write'), async (req, res) 
     throw notFound(`Référentiel inconnu : ${req.params.model}`);
   }
   const data = parse(referentialSchema, req.body);
-  const created = await createRef(model, data.code, data.label, data.categoryId);
+  // Le type d'acteur (CLIENT / FOURNISSEUR / ...) vient du corps, avec repli sur la
+  // requete pour rester compatible avec un appel `?type=`. Il n'est lu que pour le
+  // modele `partner` ; les autres referentiels l'ignorent.
+  const rawType = data.type ?? (req.query.type as string | undefined);
+  const partnerType = PARTNER_TYPES.includes(rawType as PartnerTypeValue)
+    ? (rawType as PartnerTypeValue)
+    : undefined;
+  const created = await createRef(model, data.code, data.label, data.categoryId, partnerType);
   await audit(req.user!.id, 'CREATION', `ref_${model}`, String((created as { id: number }).id), data);
   res.status(201).json(created);
 });

@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
 import { dashboardApi, loansApi } from '../services/endpoints';
 import { useAsync } from '../hooks/useAsync';
-import { Badge, Card, ErrorMessage, PageHeader, Spinner, lotTone, observationTone } from '../components/ui';
+import { Badge, Card, ErrorMessage, LotFlagBadge, PageHeader, Spinner, observationTone } from '../components/ui';
 import { DataTable, type Column } from '../components/DataTable';
 import { Qty } from '../components/Qty';
 import type { Loan } from '../types';
@@ -101,7 +101,7 @@ export function DashboardPage() {
               <div className="flag-counts">
                 {Object.entries(flags.data.counts).map(([flag, count]) => (
                   <div key={flag} className="flag-count">
-                    <Badge tone={lotTone[flag] ?? 'neutral'}>{flag}</Badge>
+                    <LotFlagBadge flag={flag} />
                     <span>{count}</span>
                   </div>
                 ))}
@@ -118,7 +118,7 @@ export function DashboardPage() {
                           {l.designation} — lot {l.lotNumber}
                         </span>
                         <span className="muted">{formatDate(l.expiryDate)}</span>
-                        <Badge tone={lotTone[l.flag] ?? 'neutral'}>{l.flag}</Badge>
+                        <LotFlagBadge flag={l.flag} />
                       </li>
                     ))}
                 </ul>

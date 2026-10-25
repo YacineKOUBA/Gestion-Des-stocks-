@@ -22,6 +22,10 @@ import { dec, toNumber } from '../utils/decimal';
  * `takenQuantity` est ce qu'une sortie EXTERIEURE a deja consomme sur cette
  * promise avec l'accord explicite de l'utilisateur (regle 3 de D20). Ce n'est pas
  * une anomalie : c'est le mecanisme par lequel un lot reserve peut etre ampute.
+ *
+ * D33 : seules les reservations REELLES (ACTIF) bloquent le stock. Les DEMANDES
+ * (en attente d'approbation) ne generent pas d'allocations et ne sont pas prises
+ * en compte dans le plafond / la disponibilite.
  */
 
 type Db = Prisma.TransactionClient;
@@ -90,6 +94,9 @@ export interface ReservedFilter {
  * d'abord). L'ordre sert aux deux consommateurs qui doivent choisir par quel
  * lot prelever : la reconstitution d'une validation et la consommation d'un
  * empietement.
+ *
+ * D33 : seules les reservations REELLES (ACTIF) bloquent le stock. Les DEMANDES
+ * sont exclues.
  */
 export async function activeAllocations(
   filter: ReservedFilter = {},

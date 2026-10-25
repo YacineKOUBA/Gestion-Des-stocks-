@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { articlesApi, loansApi, lotsApi, referentialApi, stockApi } from '../services/endpoints';
 import { errorMessage, useAsync } from '../hooks/useAsync';
-import { Badge, Card, ErrorMessage, Field, Modal, PageHeader, Spinner } from '../components/ui';
+import { Badge, Card, ErrorMessage, Field, Modal, PageHeader, SearchSelect, Spinner } from '../components/ui';
 import { DataTable, type Column } from '../components/DataTable';
 import { OverlapConfirm } from '../components/OverlapConfirm';
 import { overlapConfirmation } from '../services/api';
@@ -9,7 +9,7 @@ import type { Loan, LoanType, ReservationOverlapConfirmation, RestitutionType } 
 import { Qty } from '../components/Qty';
 import { formatDate, formatNumber, todayInput } from '../utils/format';
 import { useAuth } from '../context/AuthContext';
-import { renderPartnerOptions } from '../components/PartnerSelectOptions';
+import { articleSearchOptions, partnerSearchOptions } from '../utils/searchOptions';
 
 export function LoansPage() {
   const { can } = useAuth();
@@ -204,6 +204,12 @@ function LoanFormModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
+    // Le champ « Acteur » / « Article » étant passé en recherche par écriture, le
+    // contrôle `required` natif du <select> ne s'applique plus : on le reproduit ici.
+    if (!form.partnerId || !form.articleId) {
+      setError("Sélectionnez l'acteur et l'article.");
+      return;
+    }
     await envoyer({
       type: form.type,
       partnerId: Number(form.partnerId),
@@ -253,27 +259,23 @@ function LoanFormModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
           </select>
         </Field>
         <Field label="Acteur">
-          <select value={form.partnerId} onChange={(e) => update('partnerId', e.target.value)} required>
-            <option value="">—</option>
-            {renderPartnerOptions(partners.data)}
-          </select>
+          <SearchSelect
+            options={partnerSearchOptions(partners.data)}
+            value={form.partnerId ? Number(form.partnerId) : null}
+            onChange={(id) => update('partnerId', id ? String(id) : '')}
+            placeholder="Rechercher un acteur…"
+          />
         </Field>
         <Field label="Article">
-          <select
-            value={form.articleId}
-            onChange={(e) => {
+          <SearchSelect
+            options={articleSearchOptions(articles.data)}
+            value={form.articleId ? Number(form.articleId) : null}
+            onChange={(id) => {
               depotAuto.current = true;
-              setForm((prev) => ({ ...prev, articleId: e.target.value, lotId: '' }));
+              setForm((prev) => ({ ...prev, articleId: id ? String(id) : '', lotId: '' }));
             }}
-            required
-          >
-            <option value="">—</option>
-            {articles.data?.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.code} — {a.designation}
-              </option>
-            ))}
-          </select>
+            placeholder="Rechercher un article…"
+          />
         </Field>
         {selectedArticle?.isLotTracked ? (
           <Field label="Lot">

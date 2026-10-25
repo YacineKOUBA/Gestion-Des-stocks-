@@ -3,7 +3,9 @@ import { Fragment, useState, type ReactNode } from 'react';
 export interface Column<T> {
   key: string;
   header: string;
-  render?: (row: T) => ReactNode;
+  /** `index` est le rang de la ligne DANS LA PAGE AFFICHEE (0-based), utile pour une
+   *  numerotation de ligne. Il n'est pas un identifiant metier. */
+  render?: (row: T, index: number) => ReactNode;
   align?: 'left' | 'right' | 'center';
   className?: string;
 }
@@ -64,7 +66,7 @@ export function DataTable<T>({
                   {renderExpanded ? <td>{isOpen ? '▾' : '▸'}</td> : null}
                   {columns.map((col) => (
                     <td key={col.key} style={{ textAlign: col.align ?? 'left' }} className={col.className}>
-                      {col.render ? col.render(row) : String((row as Record<string, unknown>)[col.key] ?? '')}
+                      {col.render ? col.render(row, index) : String((row as Record<string, unknown>)[col.key] ?? '')}
                     </td>
                   ))}
                 </tr>

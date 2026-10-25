@@ -1,4 +1,4 @@
-export type RoleCode = 'ADMIN' | 'MAGASINIER' | 'TOP_MANAGEMENT' | 'SALES_ADMIN' | 'MASTER_DATA';
+export type RoleCode = 'ADMIN' | 'MAGASINIER' | 'TOP_MANAGEMENT' | 'SALES_ADMIN' | 'MASTER_DATA' | 'VIEWER';
 
 /**
  * Droits de l'application (D16).
@@ -17,8 +17,11 @@ export type Permission =
   | 'movement:read'
   | 'movement:write'
   | 'movement:revise'
+  | 'movement:edit'
+  | 'movement:adjust'
   | 'lot:read'
   | 'lot:write'
+  | 'lot:delete'
   | 'inventory:read'
   | 'inventory:count'
   | 'inventory:write'
@@ -27,6 +30,7 @@ export type Permission =
   | 'loan:write'
   | 'reservation:read'
   | 'reservation:write'
+  | 'reservation:approve'
   | 'reservation:decide'
   | 'bon:read'
   | 'bon:write'
@@ -42,7 +46,7 @@ export type Permission =
 export type ArticleEmploi = 'PRODUCTION' | 'REVENTE_EN_LETAT' | 'MIXTE';
 export type SourceAchat = 'INTERNATIONAL' | 'LOCAL' | 'MIXTE' | 'NON_DEFINI';
 export type ArticleStatut = 'ACTIVE' | 'INACTIVE';
-export type MoveTypeCode = 'ENTREE' | 'SORTIE' | 'TRANSFERT' | 'PERTE' | 'AJUSTEMENT' | 'RETOUR';
+export type MoveTypeCode = 'ENTREE' | 'SORTIE' | 'TRANSFERT' | 'PERTE' | 'AJUSTEMENT' | 'RETOUR' | 'INVENTAIRE';
 export type MoveStatus = 'ACTIF' | 'ANNULE';
 export type InventoryStatus = 'OUVERTE' | 'CLOTUREE';
 export type InventoryLineStatus = 'A_COMPTER' | 'COMPTE' | 'VALIDE' | 'REFUSE';
@@ -311,7 +315,7 @@ export interface Bon {
   lines: BonLine[];
 }
 
-export type ReservationStatus = 'ACTIF' | 'REALISE' | 'ANNULE' | 'EXPIRE';
+export type ReservationStatus = 'DEMANDE' | 'ACTIF' | 'REALISE' | 'PARTIELLEMENT_REALISE' | 'ANNULE' | 'REFUSE' | 'EXPIRE';
 
 export interface ReservationLine {
   id: string;

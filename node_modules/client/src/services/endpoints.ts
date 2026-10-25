@@ -148,6 +148,12 @@ export const movementsApi = {
   list: (filters: { articleId?: number; depotId?: number; lotId?: number; type?: string; from?: string; to?: string; limit?: number; offset?: number } = {}): Promise<Paged<Movement>> =>
     requestPaged<Movement>('/movements', { query: { ...filters } }),
   create: (payload: MovementPayload) => request<Movement | { sortie: Movement; entree: Movement }>('/movements', { method: 'POST', body: payload }),
+  // D30 : modification d'une ligne existante (administrateur, `movement:edit`). Meme
+  // corps que la creation ; le serveur applique les memes controles, empietement
+  // compris, et renvoie un jeton signe s'il faut confirmer l'amputation d'une
+  // reservation.
+  update: (id: string, payload: MovementPayload) =>
+    request<Movement>(`/movements/${id}`, { method: 'PUT', body: payload }),
   // F3 : l'annulation retire du stock (annuler une ENTREE, ou la moitie SORTIE d'un
   // TRANSFERT), elle est donc soumise au meme controle d'empietement D20 que la
   // creation et la reactivation : le jeton signe fait partie de l'appel.
@@ -168,6 +174,8 @@ export const lotsApi = {
     request<Lot>('/lots', { method: 'POST', body: payload }),
   update: (id: number, payload: Partial<{ articleId: number; lotNumber: string; fabricDate?: string | null; expiryDate?: string | null; unitPrice?: number | null; observation?: string | null }>) =>
     request<Lot>(`/lots/${id}`, { method: 'PUT', body: payload }),
+  /** Suppression définitive (réservée à l'administrateur) : seulement si le lot n'a jamais servi. */
+  remove: (id: number) => request<{ id: number }>(`/lots/${id}`, { method: 'DELETE' }),
 };
 
 export const inventoriesApi = {
@@ -213,7 +221,7 @@ export const reservationsApi = {
   list: (filters: { status?: string; partnerId?: number } = {}) =>
     request<Reservation[]>('/reservations', { query: { ...filters } }),
   synthesis: () =>
-    request<{ actives: number; expirees: number; expire7: number; realises: number }>('/reservations/synthesis'),
+    request<{ demandesEnAttente?: number; actives: number; refusees?: number; expirees: number; expire7: number; realises: number }>('/reservations/synthesis'),
   /**
    * D21 : `partnerId` conditionne le plafond renvoye, qui est propre a chaque
    * acteur. Sans lui le serveur renvoie un cumul nul, donc un plafond qui n'est le
@@ -233,8 +241,10 @@ export const reservationsApi = {
     observation?: string | null;
     lines: { articleId: number; quantity: number }[];
   }) => request<Reservation>('/reservations', { method: 'POST', body: payload }),
-  validate: (id: string) =>
-    request<Reservation & { notes?: string[] }>(`/reservations/${id}/valider`, { method: 'POST' }),
+  validate: (id: string, partial?: Array<{ lineId: string | number; quantityTaken: number }>) =>
+    request<Reservation & { notes?: string[] }>(`/reservations/${id}/valider`, { method: 'POST', body: partial?.length ? { partial } : {} }),
+  approve: (id: string) => request<Reservation>(`/reservations/${id}/approuver`, { method: 'POST' }),
+  refuse: (id: string) => request<Reservation>(`/reservations/${id}/refuser`, { method: 'POST' }),
   cancel: (id: string) => request<Reservation>(`/reservations/${id}/annuler`, { method: 'POST' }),
 };
 

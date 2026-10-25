@@ -109,7 +109,6 @@ export function Layout() {
             <img className="brand-logo" src="/logo-gd-alpha.png" alt="GD Trading" />
           </span>
           <span className="brand-text">
-            GD Trading
             <small>Gestion des stocks</small>
           </span>
         </div>

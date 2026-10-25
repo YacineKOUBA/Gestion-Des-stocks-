@@ -39,3 +39,13 @@ export const cancelSchema = z.object({
 export const reactivateSchema = z.object({
   confirmToken: z.string().max(4000).nullish(),
 });
+
+/**
+ * Modification d'une ligne de mouvement existante (administrateur uniquement).
+ *
+ * Meme forme que la creation : toutes les colonnes saisissables sont reprises, et
+ * changer le type recalcule le sens. `confirmToken` couvre le meme besoin qu'a la
+ * creation — une correction qui retire du stock peut mordre une reservation ACTIF
+ * (D20) et le serveur renvoie alors le meme jeton signe.
+ */
+export const movementUpdateSchema = movementSchema;

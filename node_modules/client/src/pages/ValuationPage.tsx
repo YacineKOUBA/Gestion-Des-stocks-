@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { referentialApi, valuationApi } from '../services/endpoints';
 import { useAsync } from '../hooks/useAsync';
-import { Badge, Card, ErrorMessage, PageHeader, Spinner, lotTone } from '../components/ui';
+import { Card, ErrorMessage, LotFlagBadge, PageHeader, Spinner } from '../components/ui';
 import { DataTable, type Column } from '../components/DataTable';
 import { Qty } from '../components/Qty';
 import type { ValuationResult } from '../types';
@@ -77,7 +77,7 @@ export function ValuationPage() {
     {
       key: 'flag',
       header: 'Péremption',
-      render: (l) => (l.flag ? <Badge tone={lotTone[l.flag] ?? 'neutral'}>{l.flag}</Badge> : '—'),
+      render: (l) => (l.flag ? <LotFlagBadge flag={l.flag} /> : '—'),
     },
     { key: 'expiryDate', header: 'DLC', render: (l) => formatDate(l.expiryDate) },
     {

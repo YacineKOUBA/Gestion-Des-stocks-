@@ -1,12 +1,13 @@
 import { useState, type FormEvent } from 'react';
 import { articlesApi, lotsApi } from '../services/endpoints';
 import { errorMessage, useAsync } from '../hooks/useAsync';
-import { Badge, Card, ErrorMessage, Field, Modal, PageHeader, Spinner, lotTone } from '../components/ui';
+import { Card, ErrorMessage, Field, LotFlagBadge, Modal, PageHeader, SearchSelect, Spinner } from '../components/ui';
 import { DataTable, type Column } from '../components/DataTable';
 import { Qty } from '../components/Qty';
 import type { Lot, LotFlagCode } from '../types';
 import { formatDate, formatMoney } from '../utils/format';
 import { useAuth } from '../context/AuthContext';
+import { articleSearchOptions } from '../utils/searchOptions';
 
 /** D24 : du plus urgent au plus calme, pour que le deroulant se lise comme l'echelle. */
 const FLAGS: LotFlagCode[] = ['PERIME', 'ORANGE', 'JAUNE', 'VERT'];
@@ -21,6 +22,26 @@ export function LotsPage() {
     () => lotsApi.list({ flag: flag || undefined, search: search.trim() || undefined }),
     [flag, search],
   );
+
+  // Suppression definitive, alignee sur la regle serveur (D24) : refusee si le lot a deja
+  // servi. Le serveur reste seul juge ; on se contente de prevenir et de remonter son message.
+  async function handleDelete(l: Lot) {
+    if (
+      !window.confirm(
+        `Supprimer définitivement le lot « ${l.lotNumber} » ?\n` +
+          "Autorisé uniquement si le lot n'a jamais servi (aucun mouvement, réservation, bon ou inventaire). " +
+          "L'opération est tracée dans le journal d'audit.",
+      )
+    )
+      return;
+    try {
+      await lotsApi.remove(l.id);
+      lots.reload();
+      window.alert(`Lot « ${l.lotNumber} » supprimé.`);
+    } catch (err) {
+      window.alert(errorMessage(err, 'Suppression impossible'));
+    }
+  }
 
   const columns: Column<Lot>[] = [
     { key: 'lotNumber', header: 'N° lot' },
@@ -47,7 +68,7 @@ export function LotsPage() {
         // n'a pas de drapeau, donc pas d'alerte a afficher.
         const f = l.flag;
         if (!f) return '—';
-        return <Badge tone={lotTone[f] ?? 'neutral'}>{f}</Badge>;
+        return <LotFlagBadge flag={f} />;
       },
     },
     {
@@ -55,15 +76,24 @@ export function LotsPage() {
       header: 'Observation',
       render: (l) => (l.observation && l.observation.trim() ? l.observation.trim() : <span className="muted">—</span>),
     },
-    ...(can('lot:write')
+    ...(can('lot:write') || can('lot:delete')
       ? [
           {
             key: 'action',
             header: 'Action',
             render: (l: Lot) => (
-              <button type="button" className="btn btn-sm" onClick={() => setEditing(l)}>
-                Modifier
-              </button>
+              <div className="row-actions">
+                {can('lot:write') ? (
+                  <button type="button" className="btn btn-small" onClick={() => setEditing(l)}>
+                    Modifier
+                  </button>
+                ) : null}
+                {can('lot:delete') ? (
+                  <button type="button" className="btn btn-small btn-danger" onClick={() => handleDelete(l)}>
+                    Supprimer
+                  </button>
+                ) : null}
+              </div>
             ),
           },
         ]
@@ -160,8 +190,14 @@ function LotFormModal({ lot, onClose, onSaved }: { lot?: Lot | null; onClose: ()
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    setSubmitting(true);
     setError(null);
+    // Le champ « Article » étant passé en recherche par écriture, le contrôle
+    // `required` natif du <select> ne s'applique plus : on le reproduit ici.
+    if (!form.articleId) {
+      setError('Sélectionnez un article.');
+      return;
+    }
+    setSubmitting(true);
     try {
       const payload = {
         articleId: Number(form.articleId),
@@ -189,14 +225,12 @@ function LotFormModal({ lot, onClose, onSaved }: { lot?: Lot | null; onClose: ()
       <form onSubmit={handleSubmit} className="form-grid">
         <ErrorMessage message={error} />
         <Field label="Article">
-          <select value={form.articleId} onChange={(e) => handleArticleChange(e.target.value)} required>
-            <option value="">—</option>
-            {articles.data?.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.code} — {a.designation}
-              </option>
-            ))}
-          </select>
+          <SearchSelect
+            options={articleSearchOptions(articles.data)}
+            value={form.articleId ? Number(form.articleId) : null}
+            onChange={(id) => handleArticleChange(id ? String(id) : '')}
+            placeholder="Rechercher un article…"
+          />
         </Field>
         <Field label="N° de lot">
           <input value={form.lotNumber} onChange={(e) => update('lotNumber', e.target.value)} required />
