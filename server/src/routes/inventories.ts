@@ -61,4 +61,12 @@ router.post('/:id/close', requirePermission('inventory:decide'), async (req, res
   res.json(await inventoryService.closeInventory(toBigInt(req.params.id), req.user!.id));
 });
 
+router.delete('/:id', requirePermission('inventory:write'), async (req, res) => {
+  res.json(await inventoryService.deleteInventory(toBigInt(req.params.id), req.user!.id));
+});
+
+router.post('/:id/delete', requirePermission('inventory:write'), async (req, res) => {
+  res.json(await inventoryService.deleteInventory(toBigInt(req.params.id), req.user!.id));
+});
+
 export default router;

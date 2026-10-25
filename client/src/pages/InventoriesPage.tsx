@@ -12,7 +12,28 @@ export function InventoriesPage() {
   const { can } = useAuth();
   const navigate = useNavigate();
   const [creating, setCreating] = useState(false);
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const inventories = useAsync(() => inventoriesApi.list(), []);
+
+  async function handleDelete(inventory: Inventory) {
+    if (
+      !window.confirm(
+        `Supprimer définitivement l'inventaire ${inventory.code} ?\nToutes ses lignes de comptage seront supprimées.`,
+      )
+    )
+      return;
+    setDeleting(inventory.id);
+    setActionError(null);
+    try {
+      await inventoriesApi.delete(inventory.id);
+      inventories.reload();
+    } catch (err) {
+      setActionError(errorMessage(err, 'Suppression impossible'));
+    } finally {
+      setDeleting(null);
+    }
+  }
 
   const columns: Column<Inventory>[] = [
     { key: 'code', header: 'Code' },
@@ -25,6 +46,33 @@ export function InventoriesPage() {
       render: (i) => <Badge tone={i.status === 'OUVERTE' ? 'orange' : 'green'}>{i.status}</Badge>,
     },
     { key: 'lines', header: 'Lignes', align: 'right', render: (i) => i._count?.lines ?? 0 },
+    ...(can('inventory:write')
+      ? [
+          {
+            key: 'actions',
+            header: '',
+            className: 'right',
+            render: (i: Inventory) =>
+              i.status === 'CLOTUREE' ? (
+                <span className="muted" title="Un inventaire clôturé ne peut pas être supprimé">
+                  —
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  className="btn btn-small btn-danger"
+                  disabled={deleting === i.id}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void handleDelete(i);
+                  }}
+                >
+                  {deleting === i.id ? 'Suppression…' : 'Supprimer'}
+                </button>
+              ),
+          },
+        ]
+      : []),
   ];
 
   return (
@@ -43,6 +91,7 @@ export function InventoriesPage() {
 
       <Card>
         {inventories.error ? <ErrorMessage message={inventories.error} /> : null}
+        {actionError ? <ErrorMessage message={actionError} /> : null}
         {inventories.loading && !inventories.data ? (
           <Spinner />
         ) : (

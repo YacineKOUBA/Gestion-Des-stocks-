@@ -49,79 +49,96 @@ export function ReservationPage() {
   const [notes, setNotes] = useState<string[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
 
+  // D34 : validation en deux etapes, dans des fenetres dediees.
+  // Etape 1 : la reservation a-t-elle ete integralement prise (OUI / NON) ?
+  // Etape 2 (si NON) : saisie des quantites reellement prises par ligne.
+  const [validateTarget, setValidateTarget] = useState<Reservation | null>(null);
+  const [partialTarget, setPartialTarget] = useState<Reservation | null>(null);
+  const [partialQtys, setPartialQtys] = useState<Record<string, string>>({});
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const [validating, setValidating] = useState(false);
+
   const reservations = useAsync(() => reservationsApi.list({ status: statut || undefined }), [statut]);
   const synthese = useAsync(() => reservationsApi.synthesis(), []);
 
-  async function runAction(id: string, action: 'valider' | 'annuler' | 'approuver' | 'refuser', label: string, reservation?: Reservation) {
-    if (action === 'valider') {
-      // D34 : demander si prise intégrale ou partielle
-      const takenAll = window.confirm('La réservation a-t-elle été intégralement prise ?\n\nOK = Oui (prise totale)\nAnnuler = Non (prise partielle)');
-      if (takenAll) {
-        if (!window.confirm(`Valider la réservation ${id} ?`)) return;
-        setBusy(id);
-        setActionError(null);
-        setNotes([]);
-        try {
-          const r = await reservationsApi.validate(id);
-          if (r.notes?.length) setNotes(r.notes);
-          setDetail((prev) => (prev && prev.id === (r as any).id ? r : prev));
-          reservations.reload();
-          synthese.reload();
-          return;
-        } catch (err) {
-          setActionError(errorMessage(err, 'Opération impossible'));
-          return;
-        } finally {
-          setBusy(null);
-        }
-      } else {
-        // Validation partielle : demander les quantités réellement prises par ligne
-        const res = reservation ?? detail;
-        if (!res?.lines?.length) {
-          setActionError('Aucune ligne à valider partiellement');
-          return;
-        }
-        const partial: Array<{ lineId: string | number; quantityTaken: number }> = [];
-        for (const line of res.lines) {
-          const reserved = Number(line.quantity ?? 0);
-          const code = (line as any).code ?? (line as any).article?.code ?? String(line.articleId);
-          const designation = (line as any).designation ?? (line as any).article?.designation ?? '';
-          const answer = window.prompt(
-            `Quantité réellement prise pour ${code} - ${designation}\nRéservée : ${reserved}\n(laisser vide ou 0 pour ne rien prendre)`,
-            String(reserved),
-          );
-          if (answer === null) return; // annulé
-          const taken = Number(String(answer).replace(',', '.'));
-          if (isNaN(taken) || taken < 0) {
-            setActionError('Quantité invalide');
-            return;
-          }
-          if (taken > reserved + 1e-9) {
-            setActionError('La quantité prise ne peut pas dépasser la quantité réservée');
-            return;
-          }
-          partial.push({ lineId: line.id, quantityTaken: taken });
-        }
-        if (!window.confirm(`Valider partiellement la réservation ${id} ?\nLes quantités restantes seront automatiquement libérées.`)) return;
-        setBusy(id);
-        setActionError(null);
-        setNotes([]);
-        try {
-          const r = await reservationsApi.validate(id, partial);
-          if ((r as any).notes?.length) setNotes((r as any).notes);
-          setDetail((prev) => (prev && prev.id === (r as any).id ? r : prev));
-          reservations.reload();
-          synthese.reload();
-          return;
-        } catch (err) {
-          setActionError(errorMessage(err, 'Opération impossible'));
-          return;
-        } finally {
-          setBusy(null);
-        }
-      }
-    }
+  /** Ouvre l'etape 1 de la validation. Ferme le detail pour ne pas empiler deux fenetres. */
+  function openValidation(reservation: Reservation) {
+    setActionError(null);
+    setNotes([]);
+    setValidationError(null);
+    setPartialTarget(null);
+    setValidateTarget(reservation);
+    setDetail(null);
+  }
 
+  async function applyValidated(updated: Reservation & { notes?: string[] }) {
+    setNotes(updated.notes ?? []);
+    setValidateTarget(null);
+    setPartialTarget(null);
+    setPartialQtys({});
+    setDetail(updated);
+    reservations.reload();
+    synthese.reload();
+  }
+
+  /** OUI : la reservation a ete integralement prise -> sorties completes, statut REALISE. */
+  async function confirmFullValidation() {
+    if (!validateTarget) return;
+    setValidating(true);
+    setValidationError(null);
+    try {
+      const updated = await reservationsApi.validate(validateTarget.id);
+      await applyValidated(updated);
+    } catch (err) {
+      setValidationError(errorMessage(err, 'Validation impossible'));
+    } finally {
+      setValidating(false);
+    }
+  }
+
+  /** NON : on passe a la saisie des quantites reellement prises. */
+  function goPartial() {
+    if (!validateTarget) return;
+    const initial: Record<string, string> = {};
+    for (const line of validateTarget.lines) initial[line.id] = String(line.quantity);
+    setPartialQtys(initial);
+    setValidationError(null);
+    setPartialTarget(validateTarget);
+    setValidateTarget(null);
+  }
+
+  /** Confirme la validation partielle : seules les quantites saisies sortent, le reste est libere. */
+  async function confirmPartialValidation() {
+    if (!partialTarget) return;
+    const partial: Array<{ lineId: string; quantityTaken: number }> = [];
+    for (const line of partialTarget.lines) {
+      const raw = (partialQtys[line.id] ?? '').trim().replace(',', '.');
+      const taken = raw === '' ? 0 : Number(raw);
+      if (!Number.isFinite(taken) || taken < 0) {
+        setValidationError(`Quantité invalide pour ${line.code}.`);
+        return;
+      }
+      if (taken > Number(line.quantity) + 1e-9) {
+        setValidationError(
+          `La quantité prise pour ${line.code} ne peut pas dépasser la quantité réservée (${line.quantity}).`,
+        );
+        return;
+      }
+      partial.push({ lineId: line.id, quantityTaken: taken });
+    }
+    setValidating(true);
+    setValidationError(null);
+    try {
+      const updated = await reservationsApi.validate(partialTarget.id, partial);
+      await applyValidated(updated);
+    } catch (err) {
+      setValidationError(errorMessage(err, 'Validation impossible'));
+    } finally {
+      setValidating(false);
+    }
+  }
+
+  async function runAction(id: string, action: 'annuler' | 'approuver' | 'refuser', label: string) {
     if (!window.confirm(`${label} la réservation ${id} ?`)) return;
     setBusy(id);
     setActionError(null);
@@ -129,7 +146,6 @@ export function ReservationPage() {
     try {
       // D33 : une DEMANDE doit etre approuvee pour devenir une reservation REELLE.
       let updated: Reservation;
-      let notesValidation: string[] | undefined;
       if (action === 'approuver') {
         updated = await reservationsApi.approve(id);
       } else if (action === 'refuser') {
@@ -137,7 +153,6 @@ export function ReservationPage() {
       } else {
         updated = await reservationsApi.cancel(id);
       }
-      if (notesValidation?.length) setNotes(notesValidation);
       setDetail((prev) => (prev && prev.id === updated.id ? updated : prev));
       reservations.reload();
       synthese.reload();
@@ -241,7 +256,7 @@ export function ReservationPage() {
                       disabled={busy === r.id}
                       onClick={(e) => {
                         e.stopPropagation();
-                        void runAction(r.id, 'valider', 'Valider', r);
+                        openValidation(r);
                       }}
                     >
                       Valider
@@ -533,13 +548,150 @@ export function ReservationPage() {
                   type="button"
                   className="btn btn-primary"
                   disabled={busy === detail.id}
-                  onClick={() => void runAction(detail.id, 'valider', 'Valider', detail)}
+                  onClick={() => openValidation(detail)}
                 >
                   Valider
                 </button>
               ) : null}
             </div>
           ) : null}
+        </Modal>
+      ) : null}
+
+      {/* D34 - Etape 1 : la reservation a-t-elle ete integralement prise ? */}
+      {validateTarget ? (
+        <Modal title={`Valider la réservation ${validateTarget.ref}`} onClose={() => setValidateTarget(null)}>
+          <p className="validation-question">La réservation a-t-elle été intégralement prise ?</p>
+
+          <div className="validation-summary">
+            <div>
+              <span className="muted">Acteur</span>
+              <strong>{validateTarget.partner.name}</strong>
+            </div>
+            <div>
+              <span className="muted">Période</span>
+              <strong>
+                {formatDate(validateTarget.startDate)} → {formatDate(validateTarget.endDate)}
+              </strong>
+            </div>
+          </div>
+
+          <DataTable
+            columns={[
+              { key: 'code', header: 'Article' },
+              {
+                key: 'quantity',
+                header: 'Quantité réservée',
+                align: 'right',
+                render: (r) => <Qty value={r.quantity}>{r.unit ? ` ${r.unit}` : null}</Qty>,
+              },
+            ] as Column<{ code: string; quantity: number; unit: string | null }>[]}
+            rows={validateTarget.lines.map((l) => ({
+              code: `${l.code} — ${l.designation}`,
+              quantity: l.quantity,
+              unit: l.unit,
+            }))}
+            rowKey={(r) => r.code}
+            empty="Aucun article."
+          />
+
+          {validationError ? <ErrorMessage message={validationError} /> : null}
+
+          <div className="form-actions">
+            <button type="button" className="btn" onClick={() => setValidateTarget(null)} disabled={validating}>
+              Fermer
+            </button>
+            <button type="button" className="btn btn-danger" onClick={goPartial} disabled={validating}>
+              Non
+            </button>
+            <button type="button" className="btn btn-primary" onClick={() => void confirmFullValidation()} disabled={validating}>
+              {validating ? 'Validation…' : 'Oui'}
+            </button>
+          </div>
+        </Modal>
+      ) : null}
+
+      {/* D34 - Etape 2 : quantites reellement prises (validation partielle) */}
+      {partialTarget ? (
+        <Modal title={`Quantités réellement prises — ${partialTarget.ref}`} onClose={() => setPartialTarget(null)}>
+          <p className="validation-question">
+            Indiquez la quantité réellement prise pour chaque article. Les quantités non prises seront automatiquement
+            libérées et la réservation sera marquée « Partiellement validée ».
+          </p>
+
+          <div className="table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Article</th>
+                  <th className="right">Réservée</th>
+                  <th className="right">Prise</th>
+                  <th className="right">Libérée</th>
+                </tr>
+              </thead>
+              <tbody>
+                {partialTarget.lines.map((line) => {
+                  const reserved = Number(line.quantity);
+                  const raw = (partialQtys[line.id] ?? '').replace(',', '.');
+                  const taken = raw === '' ? 0 : Number(raw);
+                  const released = Number.isFinite(taken) ? Math.max(reserved - taken, 0) : reserved;
+                  return (
+                    <tr key={line.id}>
+                      <td>
+                        {line.code} — {line.designation}
+                      </td>
+                      <td className="right">
+                        <Qty value={reserved}>{line.unit ? ` ${line.unit}` : null}</Qty>
+                      </td>
+                      <td className="right">
+                        <input
+                          type="number"
+                          min="0"
+                          max={reserved}
+                          step="any"
+                          value={partialQtys[line.id] ?? ''}
+                          onChange={(e) => setPartialQtys((prev) => ({ ...prev, [line.id]: e.target.value }))}
+                          className="qty-input"
+                          aria-label={`Quantité prise pour ${line.code}`}
+                        />
+                      </td>
+                      <td className="right">
+                        <Qty value={released}>{line.unit ? ` ${line.unit}` : null}</Qty>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {validationError ? <ErrorMessage message={validationError} /> : null}
+
+          <div className="form-actions">
+            <button
+              type="button"
+              className="btn"
+              onClick={() => {
+                setPartialTarget(null);
+                setValidateTarget(partialTarget);
+                setValidationError(null);
+              }}
+              disabled={validating}
+            >
+              Retour
+            </button>
+            <button type="button" className="btn" onClick={() => setPartialTarget(null)} disabled={validating}>
+              Annuler
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => void confirmPartialValidation()}
+              disabled={validating}
+            >
+              {validating ? 'Validation…' : 'Confirmer la validation partielle'}
+            </button>
+          </div>
         </Modal>
       ) : null}
     </>

@@ -1,5 +1,5 @@
 import { useState, useRef, type FormEvent } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { inventoriesApi } from '../services/endpoints';
 import { useAuth } from '../context/AuthContext';
 import { errorMessage, useAsync } from '../hooks/useAsync';
@@ -14,9 +14,11 @@ import { formatDateTime } from '../utils/format';
 export function InventoryDetailPage() {
   const { id = '' } = useParams();
   const { can } = useAuth();
+  const navigate = useNavigate();
   const detail = useAsync(() => inventoriesApi.get(id), [id]);
   const [countTarget, setCountTarget] = useState<InventoryLine | null>(null);
   const [validating, setValidating] = useState<InventoryLine | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   async function handlePopulate() {
     if (!detail.data?.depotId) {
@@ -38,6 +40,24 @@ export function InventoryDetailPage() {
       detail.reload();
     } catch (err) {
       window.alert(errorMessage(err, 'Clôture impossible'));
+    }
+  }
+
+  async function handleDelete() {
+    if (
+      !window.confirm(
+        `Supprimer définitivement l'inventaire ${detail.data?.code ?? id} ?\nToutes ses lignes de comptage seront supprimées.`,
+      )
+    )
+      return;
+    setDeleting(true);
+    try {
+      await inventoriesApi.delete(id);
+      navigate('/inventaires');
+    } catch (err) {
+      window.alert(errorMessage(err, 'Suppression impossible'));
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -106,6 +126,11 @@ export function InventoryDetailPage() {
             {can('inventory:decide') && isOpen ? (
               <button type="button" className="btn btn-primary" onClick={handleClose}>
                 Clôturer
+              </button>
+            ) : null}
+            {can('inventory:write') && isOpen ? (
+              <button type="button" className="btn btn-danger" onClick={handleDelete} disabled={deleting}>
+                {deleting ? 'Suppression…' : 'Supprimer'}
               </button>
             ) : null}
           </div>

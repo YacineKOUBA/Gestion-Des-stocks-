@@ -190,6 +190,7 @@ export const inventoriesApi = {
   validateLine: (id: string, lineId: string, payload: { decision: InventoryDecision; lossReason?: string; confirmToken?: string | null }) =>
     request(`/inventories/${id}/lines/${lineId}/validate`, { method: 'POST', body: payload }),
   close: (id: string) => request<Inventory>(`/inventories/${id}/close`, { method: 'POST' }),
+  delete: (id: string) => request<{ success: boolean }>(`/inventories/${id}`, { method: 'DELETE' }),
 };
 
 export const loansApi = {

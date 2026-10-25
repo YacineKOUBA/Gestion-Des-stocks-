@@ -665,7 +665,7 @@ input[type='checkbox'] {
   inset: 0;
   background: rgba(18, 19, 23, 0.55);
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
   padding: 40px 16px;
   overflow-y: auto;
@@ -677,6 +677,9 @@ input[type='checkbox'] {
   width: 100%;
   max-width: min(820px, 96vw);
   box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
+  /* `margin: auto` garde la fenetre centree tout en laissant le defilement
+     fonctionner quand son contenu depasse la hauteur de l'ecran. */
+  margin: auto;
 }
 .modal-header {
   display: flex;
@@ -826,11 +829,13 @@ input[type='checkbox'] {
    au milieu de l'ecran ou elle chevaucherait le champ Identifiant. */
 .login-version {
   text-align: center;
-  margin-top: -12px;
+  /* Colle au titre : le gap de 16px de .login-card est annule presque en entier. */
+  margin-top: -15px;
   color: #9ca0a8;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.5px;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+  line-height: 1.2;
 }
 
 /* Misc */
@@ -903,4 +908,37 @@ input[type='checkbox'] {
   .no-print {
     display: none !important;
   }
+}
+
+/* D34 : fenetres de validation de reservation (OUI/NON puis quantites prises) */
+.validation-question {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0 0 16px;
+  text-align: center;
+}
+.validation-summary {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 28px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  background: var(--surface-alt, #f6f7f9);
+  border-radius: 10px;
+}
+.validation-summary > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: center;
+}
+.data-table th.right,
+.data-table td.right {
+  text-align: right;
+}
+.qty-input {
+  width: 110px;
+  text-align: right;
+  display: inline-block;
 }

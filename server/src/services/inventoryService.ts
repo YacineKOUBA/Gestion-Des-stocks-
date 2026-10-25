@@ -227,3 +227,34 @@ export async function closeInventory(inventoryId: bigint, userId: number) {
   });
   return inv;
 }
+
+export async function deleteInventory(id: bigint, userId: number) {
+  const inv = await prisma.inventory.findUnique({
+    where: { id },
+    include: { _count: { select: { lines: true } } },
+  });
+  if (!inv) throw notFound('Campagne d’inventaire introuvable');
+  if (inv.status === 'CLOTUREE') throw badRequest('Impossible de supprimer un inventaire clôturé');
+
+  // Un inventaire dont une ligne a déjà été validée a produit un mouvement
+  // d'ajustement/perte : le supprimer casserait la traçabilité du stock.
+  const mouvements = await prisma.move.count({
+    where: { OR: [{ inventoryId: id }, { inventoryLine: { inventoryId: id } }] },
+  });
+  if (mouvements > 0) {
+    throw badRequest(
+      'Impossible de supprimer cet inventaire : des lignes ont déjà été validées et ont généré des mouvements de stock.',
+    );
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.inventoryLine.deleteMany({ where: { inventoryId: id } });
+    await tx.inventory.delete({ where: { id } });
+  });
+
+  await audit(userId, 'SUPPRESSION', 'inventory', String(id), {
+    code: inv.code,
+    lignesSupprimees: inv._count.lines,
+  });
+  return { success: true };
+}
