@@ -27,10 +27,18 @@ export function errorHandler(
   }
   if (err instanceof Prisma.PrismaClientKnownRequestError) {
     if (err.code === 'P2002') {
+      // `meta.target` indique la ou les colonnes en conflit (ex. ["code"]).
+      const cible = Array.isArray(err.meta?.target)
+        ? (err.meta?.target as string[]).join(', ')
+        : typeof err.meta?.target === 'string'
+          ? err.meta.target
+          : null;
       return res.status(409).json({
         error: true,
         code: 'CONFLICT',
-        message: 'Doublon détecté (valeur déjà existante)',
+        message: cible
+          ? `Doublon détecté : la valeur de « ${cible} » existe déjà.`
+          : 'Doublon détecté (valeur déjà existante)',
       });
     }
     if (err.code === 'P2025') {

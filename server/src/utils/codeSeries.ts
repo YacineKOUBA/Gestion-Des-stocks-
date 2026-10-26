@@ -17,11 +17,29 @@ export async function nextArticleCode(categoryId: number, db: Db = prisma): Prom
     throw conflict(`Pas de série de codes pour la catégorie ${categoryId}`);
   }
   const width = series.digits - series.prefix.length;
-  const body = String(series.nextValue).padStart(width, '0');
-  const code = `${series.prefix}${body}`;
-  await db.codeSeries.update({
-    where: { id: series.id },
-    data: { nextValue: series.nextValue + 1 },
-  });
-  return code;
+  const build = (value: number) => `${series.prefix}${String(value).padStart(width, '0')}`;
+
+  /*
+   * Le compteur peut etre en retard sur la realite : les imports historiques
+   * (ou une restauration) ont insere des articles sans incrementer la serie.
+   * Sans ce rattrapage, le premier code genere existait deja et la creation
+   * echouait en P2002 (« Doublon detecte ») quel que soit le libelle saisi.
+   * On avance donc jusqu'au premier code libre. La ligne de serie etant
+   * verrouillee (FOR UPDATE) et la creation se faisant dans la meme
+   * transaction, deux creations concurrentes ne peuvent pas se voir.
+   */
+  let value = series.nextValue;
+  for (let garde = 0; garde < 1_000_000; garde += 1) {
+    const code = build(value);
+    const exists = await db.article.findUnique({ where: { code }, select: { id: true } });
+    if (!exists) {
+      await db.codeSeries.update({
+        where: { id: series.id },
+        data: { nextValue: value + 1 },
+      });
+      return code;
+    }
+    value += 1;
+  }
+  throw conflict(`Impossible de générer un code libre pour la catégorie ${categoryId}`);
 }
