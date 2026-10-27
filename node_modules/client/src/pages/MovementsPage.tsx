@@ -19,14 +19,39 @@ import type { Movement, Lot, Partner, ReservationOverlapConfirmation } from '../
 import { formatDate, formatNumber, todayInput, toNumberOrNull } from '../utils/format';
 import { articleSearchOptions, partnerSearchOptions } from '../utils/searchOptions';
 
-const MOVE_TYPES = ['ENTREE', 'SORTIE', 'TRANSFERT', 'PERTE', 'AJUSTEMENT', 'RETOUR', 'INVENTAIRE'];
+// PERTE est volontairement absent : le mouvement de perte n'est plus propose ni
+// affiche sur cette page. Il reste genere par la cloture d'inventaire (decision
+// PERTE), qui ne passe pas par ce formulaire ; l'historique n'est pas efface.
+const MOVE_TYPES = ['ENTREE', 'SORTIE', 'TRANSFERT', 'AJUSTEMENT', 'RETOUR', 'INVENTAIRE'];
+
+/**
+ * Renomination des types de mouvement a l'affichage (demande de la direction).
+ *
+ * Les CODES restent inchanges — `ENTREE` et `SORTIE` continuent d'etre envoyes a
+ * l'API, filtres et stockes en base. Seul le libelle presente a l'utilisateur
+ * change : `ENTREE` devient « RECEPTION » et `SORTIE` devient « LIVRAISON ».
+ * Aucune regle metier, aucun filtre serveur et aucune donnee ne sont touches.
+ */
+const MOVE_TYPE_LABELS: Record<string, string> = {
+  ENTREE: 'RECEPTION',
+  SORTIE: 'LIVRAISON',
+};
+
+/** Natures proposées pour un ajustement NÉGATIF (sortie de stock). */
+const ADJUST_NATURES = ['PERTE', 'VOLE', 'CASSE'] as const;
+
+/** Libelle affichable d'un type de mouvement ; un code inconnu reste lisible. */
+function moveTypeLabel(code: string | null | undefined): string {
+  if (!code) return '—';
+  return MOVE_TYPE_LABELS[code] ?? code;
+}
 
 // Operations internes : elles ne renvoient ni a un client ni a un fournisseur
-// (transfert entre depots, inventaire, ajustement, perte). L'acteur est donc
+// (transfert entre depots, inventaire, ajustement). L'acteur est donc
 // PRE-REMPLI avec l'entite interne « GD Trading / BLIDA ». Ce n'est qu'une
 // suggestion de saisie : l'utilisateur reste libre de choisir un autre acteur,
 // le serveur n'impose rien.
-const MOVE_TYPES_ACTEUR_INTERNE = ['TRANSFERT', 'INVENTAIRE', 'AJUSTEMENT', 'PERTE'];
+const MOVE_TYPES_ACTEUR_INTERNE = ['TRANSFERT', 'INVENTAIRE', 'AJUSTEMENT'];
 
 /** Libelle de l'entite interne, tolerant au prefixe (« EURL ») et a la casse. */
 const ACTEUR_INTERNE_NOM = 'gd trading / blida';
@@ -142,6 +167,10 @@ export function MovementsPage() {
     () =>
       movementsApi.list({
         type: type || undefined,
+        // Le mouvement de perte est retire de la page : le serveur l'exclut du
+        // comptage et de la liste, sinon la pagination et le total ("X sur N")
+        // compteraient des lignes invisibles.
+        excludeType: 'PERTE',
         depotId: depotId ? Number(depotId) : undefined,
         from: from || undefined,
         to: to || undefined,
@@ -192,7 +221,7 @@ export function MovementsPage() {
     if (
       confirmToken == null &&
       !window.confirm(
-        `Réactiver le mouvement ${move.id} (${move.type?.code ?? ''}) ? Le stock disponible sera recalculé.`,
+        `Réactiver le mouvement ${move.id} (${moveTypeLabel(move.type?.code)}) ? Le stock disponible sera recalculé.`,
       )
     )
       return;
@@ -243,7 +272,7 @@ export function MovementsPage() {
       render: (_m, index) => formatNumber(total - (offset + index)),
     },
     { key: 'movementDate', header: 'Date', render: (m) => formatDate(m.movementDate) },
-    { key: 'type', header: 'Type', render: (m) => m.type?.code ?? '—' },
+    { key: 'type', header: 'Type', render: (m) => moveTypeLabel(m.type?.code) },
     { key: 'article', header: 'Article', render: (m) => (m.article ? `${m.article.code} — ${m.article.designation}` : '—') },
     { key: 'depot', header: 'Dépôt', render: (m) => m.depot?.label ?? '—' },
     { key: 'location', header: 'Emplacement', render: (m) => m.location?.label ?? '—' },
@@ -259,7 +288,16 @@ export function MovementsPage() {
       ),
     },
     { key: 'partner', header: 'Acteur', render: (m) => m.partner?.name ?? '-' },
-    { key: 'observation', header: 'Observation', render: (m) => m.observation ?? '—' },
+    {
+      key: 'observation',
+      header: 'Observation',
+      // Un ajustement négatif n'a pas d'observation libre : la colonne affiche la
+      // nature et le motif saisis dans le formulaire (« PERTE — Marchandise cassée »).
+      render: (m) =>
+        m.adjustNature
+          ? [m.adjustNature, m.adjustMotif].filter(Boolean).join(' — ')
+          : (m.observation ?? '—'),
+    },
     {
       key: 'status',
       header: 'Statut',
@@ -271,7 +309,7 @@ export function MovementsPage() {
     <>
       <PageHeader
         title="Mouvement"
-        subtitle="Entrées, sorties, transferts, pertes, ajustements et retours"
+        subtitle="Réceptions, livraisons, transferts, ajustements et retours"
         actions={
           can('movement:write') ? (
             <button
@@ -294,7 +332,7 @@ export function MovementsPage() {
             <option value="">Tous les types</option>
             {MOVE_TYPES.map((t) => (
               <option key={t} value={t}>
-                {t}
+                {moveTypeLabel(t)}
               </option>
             ))}
           </select>
@@ -537,6 +575,9 @@ function MovementFormModal({
           docNumber: movement.docNumber ?? '',
           unitPrice: movement.unitPrice != null ? String(Number(movement.unitPrice)) : '',
           observation: movement.observation ?? '',
+          sens: String(movement.sens),
+          adjustNature: movement.adjustNature ?? '',
+          adjustMotif: movement.adjustMotif ?? '',
         }
       : {
           type: 'ENTREE',
@@ -552,6 +593,9 @@ function MovementFormModal({
           docNumber: '',
           unitPrice: '',
           observation: '',
+          sens: '1',
+          adjustNature: '',
+          adjustMotif: '',
         },
   );
   const [error, setError] = useState<string | null>(null);
@@ -588,6 +632,10 @@ function MovementFormModal({
   const selectedArticle = (articles.data ?? []).find((a) => String(a.id) === form.articleId);
   const lotSelectionnel = articleLots.find((l) => String(l.id) === form.lotId) ?? null;
   const isTransfer = form.type === 'TRANSFERT';
+  // Un ajustement peut être POSITIF (entrée en stock) ou NÉGATIF (sortie). Le
+  // négatif doit être qualifié : nature + motif remplacent alors l'observation.
+  const isAjustement = form.type === 'AJUSTEMENT';
+  const isAjustementNegatif = isAjustement && form.sens === '-1';
   // D26 : l'AJUSTEMENT n'est propose qu'aux profils qui en ont le droit (administrateur).
   const typesDisponibles = can('movement:adjust') ? MOVE_TYPES : MOVE_TYPES.filter((t) => t !== 'AJUSTEMENT');
   // D31 : le champ Date est verrouille pour le Magasinier, et POUR LUI SEUL. La regle ne
@@ -640,6 +688,12 @@ function MovementFormModal({
     if (!form.movementDate) errors.push('renseignez la date');
     if (!(Number(form.quantity) > 0)) errors.push('saisissez une quantité supérieure à 0');
     if (isTransfer && !form.depotDestId) errors.push('sélectionnez un dépôt de destination');
+    if (isAjustementNegatif && !form.adjustNature) {
+      errors.push("sélectionnez la nature de l'ajustement (PERTE, VOLE ou CASSE)");
+    }
+    if (isAjustementNegatif && !form.adjustMotif.trim()) {
+      errors.push("renseignez le motif de l'ajustement");
+    }
     if (selectedArticle?.isLotTracked && !form.lotId) {
       errors.push("cet article est suivi par lot : sélectionnez un lot (créez-en un depuis « Lots » si nécessaire)");
     }
@@ -665,7 +719,13 @@ function MovementFormModal({
       partnerId: form.partnerId ? Number(form.partnerId) : null,
       docNumber: form.docNumber || null,
       unitPrice: toNumberOrNull(form.unitPrice),
-      observation: form.observation || null,
+      // Ajustement : le sens est explicite (1 = entrée, -1 = sortie). Les autres
+      // types gardent leur sens imposé par le serveur.
+      ...(isAjustement ? { sens: Number(form.sens) } : {}),
+      // Ajustement négatif : nature + motif remplacent l'observation libre.
+      adjustNature: isAjustementNegatif ? form.adjustNature : null,
+      adjustMotif: isAjustementNegatif ? form.adjustMotif.trim() : null,
+      observation: isAjustementNegatif ? null : form.observation || null,
     };
     await envoyer(payload);
   }
@@ -706,11 +766,22 @@ function MovementFormModal({
           <select value={form.type} onChange={(e) => update('type', e.target.value)}>
             {typesDisponibles.map((t) => (
               <option key={t} value={t}>
-                {t}
+                {moveTypeLabel(t)}
               </option>
             ))}
           </select>
         </Field>
+        {isAjustement ? (
+          <Field
+            label="Sens de l'ajustement"
+            hint="Positif : entrée en stock (+). Négatif : sortie de stock (−)."
+          >
+            <select value={form.sens} onChange={(e) => update('sens', e.target.value)}>
+              <option value="1">Positif (+)</option>
+              <option value="-1">Négatif (−)</option>
+            </select>
+          </Field>
+        ) : null}
         <Field label="Article">
           <SearchSelect
             options={articleSearchOptions(articles.data)}
@@ -841,9 +912,37 @@ function MovementFormModal({
             onChange={(e) => update('unitPrice', e.target.value)}
           />
         </Field>
-        <Field label="Observation">
-          <input value={form.observation} onChange={(e) => update('observation', e.target.value)} />
-        </Field>
+        {isAjustementNegatif ? (
+          <>
+            <Field label="Nature">
+              <select
+                value={form.adjustNature}
+                onChange={(e) => update('adjustNature', e.target.value)}
+                required
+              >
+                <option value="">—</option>
+                {ADJUST_NATURES.map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Motif">
+              <input
+                value={form.adjustMotif}
+                onChange={(e) => update('adjustMotif', e.target.value)}
+                maxLength={255}
+                placeholder="Précisez le motif…"
+                required
+              />
+            </Field>
+          </>
+        ) : (
+          <Field label="Observation">
+            <input value={form.observation} onChange={(e) => update('observation', e.target.value)} />
+          </Field>
+        )}
         <div className="form-actions">
           <button type="button" className="btn" onClick={onClose}>
             Annuler

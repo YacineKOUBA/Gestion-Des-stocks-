@@ -20,6 +20,10 @@ export const userCreateSchema = z.object({
 });
 
 export const userUpdateSchema = z.object({
+  // L'identifiant est modifiable par l'administrateur (meme regle de longueur
+  // qu'a la creation). L'unicite est verifiee dans la route pour renvoyer un
+  // message explicite au lieu d'un 409 generique.
+  login: z.string().trim().min(3).max(50).optional(),
   displayName: z.string().max(100).nullish(),
   password: z.string().min(6).nullish(),
   isActive: z.boolean().nullish(),

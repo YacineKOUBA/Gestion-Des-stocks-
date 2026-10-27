@@ -416,6 +416,9 @@ model Move {
   currency       String     @default("DZD") @db.VarChar(3)
   movementDate   DateTime   @map("movement_date") @db.Date
   observation    String?    @db.VarChar(255)
+  // Ajustement negatif : nature de la diminution (PERTE, VOLE, CASSE) et motif libre.
+  adjustNature   String?    @map("adjust_nature") @db.VarChar(20)
+  adjustMotif    String?    @map("adjust_motif") @db.VarChar(255)
   linkMoveId     BigInt?    @map("link_move_id")
   linkedMove     Move?      @relation("MoveLink", fields: [linkMoveId], references: [id])
   linkedMoves    Move[]     @relation("MoveLink")

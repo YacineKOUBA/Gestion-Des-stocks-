@@ -4,6 +4,9 @@ import { CURRENCY_CODES } from '../utils/currencies';
 
 export const moveTypeEnum = z.nativeEnum(MoveTypeCode);
 
+/** Natures proposees pour un ajustement NEGATIF (sortie de stock). */
+export const ADJUST_NATURES = ['PERTE', 'VOLE', 'CASSE'] as const;
+
 export const movementSchema = z
   .object({
     type: moveTypeEnum,
@@ -21,11 +24,35 @@ export const movementSchema = z
     currency: z.enum(CURRENCY_CODES as [string, ...string[]]).nullish(),
     observation: z.string().max(255).nullish(),
     sens: z.number().int().refine((v) => v === 1 || v === -1).nullish(),
+    // Ajustement negatif : la nature et le motif remplacent l'observation libre
+    // dans le formulaire. Ils sont exiges ci-dessous pour ce seul cas.
+    adjustNature: z.enum(ADJUST_NATURES).nullish(),
+    adjustMotif: z.string().trim().max(255).nullish(),
     // D20, decision 7 : jeton de confirmation d'un empietement sur stock reserve.
     // Absent ou invalide => l'ecriture est refusee (409) avec le detail du conflit.
     confirmToken: z.string().max(4000).nullish(),
   })
-  .refine((v) => v.quantity > 0, { message: 'quantité > 0' });
+  .refine((v) => v.quantity > 0, { message: 'quantité > 0' })
+  .superRefine((v, ctx) => {
+    // Un ajustement negatif retire du stock : il doit etre qualifie. La cloture
+    // d'inventaire, qui cree aussi des AJUSTEMENT negatifs en interne, ne passe
+    // pas par ce schema et n'est donc pas concernee.
+    if (v.type !== MoveTypeCode.AJUSTEMENT || v.sens !== -1) return;
+    if (!v.adjustNature) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['adjustNature'],
+        message: 'La nature est obligatoire pour un ajustement négatif (PERTE, VOLE, CASSE).',
+      });
+    }
+    if (!v.adjustMotif) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['adjustMotif'],
+        message: 'Le motif est obligatoire pour un ajustement négatif.',
+      });
+    }
+  });
 
 export const cancelSchema = z.object({
   id: z.bigint(),

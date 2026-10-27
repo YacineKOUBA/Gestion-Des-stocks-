@@ -40,6 +40,7 @@ export type Permission =
   | 'referential:write'
   | 'user:read'
   | 'user:write'
+  | 'user:delete'
   | 'settings:read'
   | 'settings:write'
   | 'audit:read';
@@ -228,6 +229,9 @@ export interface Movement {
   currency: string;
   movementDate: string;
   observation: string | null;
+  /** Ajustement négatif : nature (PERTE, VOLE, CASSE) et motif libre. */
+  adjustNature: string | null;
+  adjustMotif: string | null;
   status: MoveStatus;
   createdBy: number;
   createdAt: string;

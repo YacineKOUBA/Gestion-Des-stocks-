@@ -28,6 +28,9 @@ export interface MoveInput {
   currency?: string | null;
   observation?: string | null;
   sens?: number | null;
+  /** Ajustement negatif : nature (PERTE, VOLE, CASSE) et motif libre. */
+  adjustNature?: string | null;
+  adjustMotif?: string | null;
   inventoryId?: bigint | null;
   /**
    * F3 : libelle du geste pour le message d'empietement. Une annulation d'entree
@@ -319,6 +322,9 @@ async function createMovementTx(input: MoveInput, userId: number, db: Db) {
   const currency = input.currency ?? article.currency ?? 'DZD';
 
   const sens = sensDuType(input.type, input.sens);
+  // Les qualificatifs d'ajustement n'ont de sens que sur un ajustement NEGATIF.
+  // On les neutralise partout ailleurs pour ne pas laisser de valeurs orphelines.
+  const ajustementNegatif = input.type === MoveTypeCode.AJUSTEMENT && sens < 0;
 
   // Controle de disponibilite pour les mouvements negatifs (0.4 : bloquer).
   // Le stock de la cellule source est conserve : c'est le Y du controle D20.
@@ -363,6 +369,8 @@ async function createMovementTx(input: MoveInput, userId: number, db: Db) {
     unitPrice: input.unitPrice,
     currency,
     observation: input.observation,
+    adjustNature: ajustementNegatif ? (input.adjustNature ?? null) : null,
+    adjustMotif: ajustementNegatif ? (input.adjustMotif ?? null) : null,
     inventoryId: input.inventoryId,
     createdBy: userId,
   };
@@ -417,6 +425,15 @@ export async function createMovement(input: MoveInput, userId: number, db?: Db) 
       type: input.type,
       articleId: input.articleId,
       quantity: input.quantity,
+      sens: input.type === MoveTypeCode.AJUSTEMENT ? (input.sens ?? 1) : undefined,
+      adjustNature:
+        input.type === MoveTypeCode.AJUSTEMENT && (input.sens ?? 1) < 0
+          ? (input.adjustNature ?? null)
+          : null,
+      adjustMotif:
+        input.type === MoveTypeCode.AJUSTEMENT && (input.sens ?? 1) < 0
+          ? (input.adjustMotif ?? null)
+          : null,
     });
   }
   return result;
@@ -829,6 +846,7 @@ export async function updateMovement(
   // changer son effet sur le stock, sinon un « ENTREE » corrige en « SORTIE » garderait
   // un signe +1 et ferait monter le stock au lieu de le faire baisser.
   const sens = sensDuType(input.type, input.sens);
+  const ajustementNegatif = input.type === MoveTypeCode.AJUSTEMENT && sens < 0;
 
   let amputations: Amputation[] = [];
 
@@ -895,6 +913,8 @@ export async function updateMovement(
         unitPrice: input.unitPrice,
         currency,
         observation: input.observation,
+        adjustNature: ajustementNegatif ? (input.adjustNature ?? null) : null,
+        adjustMotif: ajustementNegatif ? (input.adjustMotif ?? null) : null,
       },
     });
   });
@@ -914,6 +934,8 @@ export async function updateMovement(
       docNumber: move.docNumber,
       unitPrice: move.unitPrice != null ? toNumber(move.unitPrice, 4) : null,
       observation: move.observation,
+      adjustNature: move.adjustNature,
+      adjustMotif: move.adjustMotif,
     },
     apres: {
       type: input.type,
@@ -928,6 +950,8 @@ export async function updateMovement(
       docNumber: input.docNumber ?? null,
       unitPrice: input.unitPrice ?? null,
       observation: input.observation ?? null,
+      adjustNature: ajustementNegatif ? (input.adjustNature ?? null) : null,
+      adjustMotif: ajustementNegatif ? (input.adjustMotif ?? null) : null,
     },
     ...(amputations.length ? { amputations } : {}),
   });

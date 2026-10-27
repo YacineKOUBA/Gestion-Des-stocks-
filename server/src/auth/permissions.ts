@@ -85,6 +85,7 @@ export const PERMISSIONS = [
   'referential:write',
   'user:read',
   'user:write',
+  'user:delete',
   'settings:read',
   'settings:write',
   'audit:read',

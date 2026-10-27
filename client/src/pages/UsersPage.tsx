@@ -7,9 +7,10 @@ import type { User } from '../types';
 import { useAuth } from '../context/AuthContext';
 
 export function UsersPage() {
-  const { can } = useAuth();
+  const { can, user: currentUser } = useAuth();
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<User | null>(null);
+  const [deleting, setDeleting] = useState<User | null>(null);
   const users = useAsync(() => usersApi.list(), []);
 
   const columns: Column<User>[] = [
@@ -45,15 +46,34 @@ export function UsersPage() {
           <DataTable
             columns={[
               ...columns,
-              ...(can('user:write')
+              ...(can('user:write') || can('user:delete')
                 ? [
                     {
                       key: 'actions',
                       header: 'Actions',
                       render: (u: User) => (
-                        <button type="button" className="btn btn-small" onClick={() => setEditing(u)}>
-                          Modifier
-                        </button>
+                        <div className="row-actions">
+                          {can('user:write') ? (
+                            <button type="button" className="btn btn-small" onClick={() => setEditing(u)}>
+                              Modifier
+                            </button>
+                          ) : null}
+                          {can('user:delete') ? (
+                            <button
+                              type="button"
+                              className="btn btn-small btn-danger"
+                              onClick={() => setDeleting(u)}
+                              disabled={u.id === currentUser?.id}
+                              title={
+                                u.id === currentUser?.id
+                                  ? 'Vous ne pouvez pas supprimer votre propre compte'
+                                  : undefined
+                              }
+                            >
+                              Supprimer
+                            </button>
+                          ) : null}
+                        </div>
                       ),
                     },
                   ]
@@ -82,6 +102,17 @@ export function UsersPage() {
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
+            users.reload();
+          }}
+        />
+      ) : null}
+
+      {deleting ? (
+        <UserDeleteModal
+          user={deleting}
+          onClose={() => setDeleting(null)}
+          onDeleted={() => {
+            setDeleting(null);
             users.reload();
           }}
         />
@@ -157,6 +188,7 @@ function UserCreateModal({ onClose, onSaved }: { onClose: () => void; onSaved: (
 
 function UserEditModal({ user, onClose, onSaved }: { user: User; onClose: () => void; onSaved: () => void }) {
   const [form, setForm] = useState({
+    login: user.login,
     displayName: user.displayName ?? '',
     password: '',
     isActive: user.isActive,
@@ -170,6 +202,7 @@ function UserEditModal({ user, onClose, onSaved }: { user: User; onClose: () => 
     setError(null);
     try {
       await usersApi.update(user.id, {
+        login: form.login.trim(),
         displayName: form.displayName || null,
         password: form.password || null,
         isActive: form.isActive,
@@ -186,6 +219,15 @@ function UserEditModal({ user, onClose, onSaved }: { user: User; onClose: () => 
     <Modal title={`Modifier ${user.login}`} onClose={onClose}>
       <form onSubmit={handleSubmit} className="form-grid">
         <ErrorMessage message={error} />
+        <Field label="Identifiant" hint="3 caractères minimum, unique">
+          <input
+            value={form.login}
+            onChange={(e) => setForm((prev) => ({ ...prev, login: e.target.value }))}
+            required
+            minLength={3}
+            maxLength={50}
+          />
+        </Field>
         <Field label="Nom affiché">
           <input
             value={form.displayName}
@@ -215,6 +257,63 @@ function UserEditModal({ user, onClose, onSaved }: { user: User; onClose: () => 
           </button>
         </div>
       </form>
+    </Modal>
+  );
+}
+
+/**
+ * Suppression définitive d'un compte (réservée à l'administrateur).
+ *
+ * On demande confirmation dans une modale au lieu d'un `window.confirm` : le refus
+ * du serveur (compte ayant déjà agi, dernier administrateur) doit rester lisible
+ * dans la fenêtre, avec son motif, sans fermer la page ni perdre le contexte.
+ */
+function UserDeleteModal({
+  user,
+  onClose,
+  onDeleted,
+}: {
+  user: User;
+  onClose: () => void;
+  onDeleted: () => void;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleDelete() {
+    setSubmitting(true);
+    setError(null);
+    try {
+      await usersApi.remove(user.id);
+      onDeleted();
+    } catch (err) {
+      setError(errorMessage(err, 'Suppression impossible'));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Modal title="Supprimer l'utilisateur" onClose={onClose}>
+      <div className="form-grid">
+        <ErrorMessage message={error} />
+        <p className="validation-question">
+          Supprimer définitivement le compte « {user.login} » ?
+        </p>
+        <p className="muted" style={{ textAlign: 'center', marginTop: -8 }}>
+          Cette action est irréversible. Un compte ayant déjà enregistré des mouvements ou des
+          réservations ne peut pas être supprimé : désactivez-le plutôt pour conserver la
+          traçabilité.
+        </p>
+        <div className="form-actions">
+          <button type="button" className="btn" onClick={onClose} disabled={submitting}>
+            Annuler
+          </button>
+          <button type="button" className="btn btn-danger" onClick={handleDelete} disabled={submitting}>
+            {submitting ? 'Suppression…' : 'Supprimer définitivement'}
+          </button>
+        </div>
+      </div>
     </Modal>
   );
 }

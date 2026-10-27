@@ -20,6 +20,12 @@ router.get('/', requirePermission('movement:read'), async (req, res) => {
   if (q.depotId) where.depotId = Number(q.depotId);
   if (q.lotId) where.lotId = Number(q.lotId);
   if (q.type) where.type = { code: q.type };
+  // Exclusion d'un type (utilisee par la page Mouvement pour retirer definitivement
+  // la PERTE de la liste et du comptage). Elle s'applique au comptage ET a la
+  // requete, sinon la pagination et le total « X sur N » compteraient des lignes
+  // invisibles. Un filtre `type` explicite reste prioritaire et exclut deja les
+  // autres types.
+  else if (q.excludeType) where.type = { code: { not: String(q.excludeType) } };
   if (q.from) where.movementDate = { gte: new Date(String(q.from)) };
   if (q.to) where.movementDate = { ...(where.movementDate as object), lte: new Date(String(q.to)) };
 

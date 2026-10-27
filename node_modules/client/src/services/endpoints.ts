@@ -140,12 +140,17 @@ export interface MovementPayload {
   unitPrice?: number | null;
   currency?: string;
   observation?: string | null;
+  /** Ajustement : sens 1 = entrée (+) / -1 = sortie (−). */
+  sens?: number | null;
+  /** Ajustement négatif : nature (PERTE, VOLE, CASSE) et motif libre. */
+  adjustNature?: string | null;
+  adjustMotif?: string | null;
   /** D20 : jeton signe renvoye apres confirmation d'un empietement de reservation. */
   confirmToken?: string | null;
 }
 
 export const movementsApi = {
-  list: (filters: { articleId?: number; depotId?: number; lotId?: number; type?: string; from?: string; to?: string; limit?: number; offset?: number } = {}): Promise<Paged<Movement>> =>
+  list: (filters: { articleId?: number; depotId?: number; lotId?: number; type?: string; excludeType?: string; from?: string; to?: string; limit?: number; offset?: number } = {}): Promise<Paged<Movement>> =>
     requestPaged<Movement>('/movements', { query: { ...filters } }),
   create: (payload: MovementPayload) => request<Movement | { sortie: Movement; entree: Movement }>('/movements', { method: 'POST', body: payload }),
   // D30 : modification d'une ligne existante (administrateur, `movement:edit`). Meme
@@ -279,8 +284,10 @@ export const usersApi = {
   list: () => request<User[]>('/users'),
   create: (payload: { login: string; password: string; displayName?: string | null; roleId: number }) =>
     request<User>('/users', { method: 'POST', body: payload }),
-  update: (id: number, payload: { displayName?: string | null; password?: string | null; isActive?: boolean }) =>
+  update: (id: number, payload: { login?: string; displayName?: string | null; password?: string | null; isActive?: boolean }) =>
     request<User>(`/users/${id}`, { method: 'PUT', body: payload }),
+  /** Suppression définitive (administrateur uniquement, compte sans historique). */
+  remove: (id: number) => request<{ id: number }>(`/users/${id}`, { method: 'DELETE' }),
 };
 
 export const auditApi = {
