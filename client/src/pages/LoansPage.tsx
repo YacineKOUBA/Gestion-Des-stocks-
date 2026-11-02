@@ -164,9 +164,15 @@ function LoanFormModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
   const depotAuto = useRef(true);
 
   const selectedArticle = articles.data?.find((a) => a.id === Number(form.articleId));
+  // Un EMPRUNT fait entrer du stock : un lot neuf a zero doit rester selectionnable.
+  // Un PRET, lui, ne propose que les lots qui ont encore du stock.
+  const isEmprunt = form.type === 'EMPRUNT';
   const lots = useAsync(
-    () => (form.articleId ? lotsApi.list({ articleId: Number(form.articleId) }) : Promise.resolve([])),
-    [form.articleId],
+    () =>
+      form.articleId
+        ? lotsApi.list({ articleId: Number(form.articleId), includeExhausted: isEmprunt })
+        : Promise.resolve([]),
+    [form.articleId, isEmprunt],
     { label: 'Lots' },
   );
   // meme source de verite que le controle serveur : /loans/disponibilite
@@ -390,12 +396,19 @@ function RestitutionModal({ loan, onClose, onSaved }: { loan: Loan; onClose: () 
     type: defaultType as RestitutionType,
     quantity: String(loan.solde ?? ''),
     restDate: todayInput(),
+    lotId: (loan as any).lotId ? String((loan as any).lotId) : (loan.lotNumber ? '' : ''),
   });
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   // D20 : restituer un EMPRUNT retire du stock, donc peut empieter sur une reservation.
   const [overlap, setOverlap] = useState<ReservationOverlapConfirmation | null>(null);
   const dernierPayload = useRef<Parameters<typeof loansApi.restitute>[0] | null>(null);
+  // Suggestions de lots pour l'article du prêt/emprunt
+  const lots = useAsync(
+    () => (loan.articleId ? lotsApi.list({ articleId: loan.articleId, includeExhausted: true }) : Promise.resolve([] as import('../types').Lot[])),
+    [loan.articleId],
+    { label: 'Lots' },
+  );
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -404,6 +417,7 @@ function RestitutionModal({ loan, onClose, onSaved }: { loan: Loan; onClose: () 
       type: form.type,
       quantity: Number(form.quantity),
       restDate: form.restDate,
+      lotId: form.lotId ? Number(form.lotId) : null,
     });
   }
 
@@ -437,11 +451,27 @@ function RestitutionModal({ loan, onClose, onSaved }: { loan: Loan; onClose: () 
         <Field label="Type de restitution">
           <select
             value={form.type}
+            disabled
             onChange={(e) => setForm((prev) => ({ ...prev, type: e.target.value as RestitutionType }))}
           >
             <option value="RESTITUTION_PRET">RESTITUTION_PRET</option>
             <option value="RESTITUTION_EMPRUNT">RESTITUTION_EMPRUNT</option>
           </select>
+        </Field>
+        <Field label="Lot">
+          <select
+            value={form.lotId}
+            onChange={(e) => setForm((prev) => ({ ...prev, lotId: e.target.value }))}
+            required
+          >
+            <option value="">—</option>
+            {(lots.data ?? []).map((l) => (
+              <option key={l.id} value={String(l.id)}>
+                {l.lotNumber}
+              </option>
+            ))}
+          </select>
+          {loan.lotNumber ? <span className="muted">Lot d'origine : {loan.lotNumber}</span> : null}
         </Field>
         <Field label="Quantité">
           <input

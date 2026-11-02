@@ -30,15 +30,23 @@ export class ApiError extends Error {
  * serveur repond 409 RESERVATION_EMPIETEMENT avec le detail du conflit et un jeton
  * signe. Le client affiche la confirmation, puis renvoie le jeton avec la MEME
  * operation : c'est la seule facon pour lui de rejouer l'ecriture sans la retaper.
+ *
+ * Étendu : tout risque de stock négatif doit aussi déclencher un avertissement
+ * avec confirmation (code STOCK_NEGATIF_A_CONFIRMATION).
  */
-export function overlapConfirmation(error: unknown): ReservationOverlapConfirmation | null {
+export function overlapConfirmation(
+  error: unknown,
+): ReservationOverlapConfirmation | null {
   if (!(error instanceof ApiError) || error.status !== 409) return null;
-  // Le serveur pose le code generique CONFLICT a la racine et le code precis
-  // RESERVATION_EMPIETEMENT dans details : on accepte les deux emplacements.
   const details = error.details as
     | { code?: string; confirmation?: ReservationOverlapConfirmation }
     | undefined;
-  if (error.code !== 'RESERVATION_EMPIETEMENT' && details?.code !== 'RESERVATION_EMPIETEMENT') {
+  if (
+    error.code !== 'RESERVATION_EMPIETEMENT' &&
+    details?.code !== 'RESERVATION_EMPIETEMENT' &&
+    error.code !== 'STOCK_NEGATIF_A_CONFIRMATION' &&
+    details?.code !== 'STOCK_NEGATIF_A_CONFIRMATION'
+  ) {
     return null;
   }
   return details?.confirmation?.confirmToken ? details.confirmation : null;

@@ -3,6 +3,7 @@ import { LoanType, Prisma, RestitutionType } from '@prisma/client';
 import { badRequest, notFound } from '../utils/apiError';
 import { audit } from '../utils/audit';
 import { createMovement } from './movementService';
+import { assertNoNegativeStock } from './nonNegativeStock';
 import { dec, toNumber } from '../utils/decimal';
 
 type Db = Prisma.TransactionClient;
@@ -207,7 +208,7 @@ export async function createLoan(
 }
 
 export async function createRestitution(
-  data: { loanId: bigint; type: RestitutionType; quantity: number; restDate: Date; confirmToken?: string | null },
+  data: { loanId: bigint; type: RestitutionType; quantity: number; restDate: Date; lotId?: number | null; confirmToken?: string | null },
   userId: number,
 ) {
   const rest = await prisma.$transaction(async (tx) => {
@@ -221,18 +222,41 @@ export async function createRestitution(
     // RESTITUTION_PRET : le retour reintegre le stock (entree).
     // RESTITUTION_EMPRUNT : le retour retire la marchandise empruntee (sortie).
     const moveType = data.type === RestitutionType.RESTITUTION_PRET ? 'ENTREE' : 'SORTIE';
-    // La restitution doit reintegrer le stock dans le MEME depot / emplacement
-    // que le pret initial (sinon le controle de disponibilite porte sur un emplacement vide).
     const origin = loan.movementId
       ? await tx.move.findUnique({
           where: { id: loan.movementId },
           select: { depotId: true, lotId: true, locationId: true },
         })
       : null;
-    const lotId = origin?.lotId ?? null;
+    // Le lot peut etre saisi librement avec suggestion : priorite au lot saisi, sinon celui du pret initial.
+    const lotIdRest = data.lotId ?? origin?.lotId ?? null;
+    if (moveType === 'SORTIE') {
+      const target = await resolveStockTarget(
+        loan.articleId,
+        lotIdRest,
+        origin ? { depotId: origin.depotId, locationId: origin.locationId } : {},
+        tx,
+      );
+      await assertNoNegativeStock(
+        {
+          articleId: loan.articleId,
+          lotId: lotIdRest,
+          depotId: target.depotId,
+          locationId: target.locationId,
+          quantity: data.quantity,
+          type: 'RESTITUTION_EMPRUNT',
+          confirmToken: data.confirmToken ?? null,
+        },
+        -1,
+        userId,
+        tx,
+      );
+    }
+    // La restitution doit reintegrer le stock dans le MEME depot / emplacement
+    // que le pret initial (sinon le controle de disponibilite porte sur un emplacement vide).
     const target = await resolveStockTarget(
       loan.articleId,
-      lotId,
+      lotIdRest,
       origin ? { depotId: origin.depotId, locationId: origin.locationId } : {},
       tx,
     );
@@ -240,7 +264,7 @@ export async function createRestitution(
       {
         type: moveType,
         articleId: loan.articleId,
-        lotId,
+        lotId: lotIdRest,
         locationId: target.locationId,
         quantity: data.quantity,
         movementDate: data.restDate,

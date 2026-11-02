@@ -11,6 +11,7 @@ import {
   overlapTokenPayload,
   type Amputation,
 } from './reservationOverlap';
+import { assertNoNegativeStock } from './nonNegativeStock';
 
 export interface MoveInput {
   type: MoveTypeCode;
@@ -28,7 +29,7 @@ export interface MoveInput {
   currency?: string | null;
   observation?: string | null;
   sens?: number | null;
-  /** Ajustement negatif : nature (PERTE, VOLE, CASSE) et motif libre. */
+  /** Ajustement negatif : nature (PERTE, VOLE, CASSE, REBUT) et motif libre. */
   adjustNature?: string | null;
   adjustMotif?: string | null;
   inventoryId?: bigint | null;
@@ -348,6 +349,25 @@ async function createMovementTx(input: MoveInput, userId: number, db: Db) {
     stockCellule = await assertAvailable(input, input.depotId, db);
   }
 
+  // Prévention stock négatif : toute opération retirant du stock doit être confirmée
+  // explicitement si elle générerait un solde négatif.
+  if (sens < 0) {
+    await assertNoNegativeStock(
+      {
+        articleId: input.articleId,
+        lotId: input.lotId,
+        depotId: input.depotId,
+        locationId: input.locationId,
+        quantity: input.quantity,
+        type: input.type,
+        confirmToken: input.confirmToken,
+      },
+      sens,
+      userId,
+      db,
+    );
+  }
+
   // D20, regle 3 : seul passage oblige pour toute operation qui retire du stock.
   await assertNoReservedOverlap(input, sens, stockCellule, userId, db);
 
@@ -507,6 +527,22 @@ export async function cancelMovement(
         tx,
       );
 
+      // Prévention stock négatif : annuler une ENTREE/TRF destination retire du stock
+      await assertNoNegativeStock(
+        {
+          articleId: retirant.articleId,
+          lotId: retirant.lotId,
+          depotId: retirant.depotId,
+          locationId: retirant.locationId,
+          quantity: toNumber(retirant.quantity, 3),
+          type: retirant.type.code,
+          confirmToken: confirmToken ?? null,
+        },
+        -1,
+        userId,
+        tx,
+      );
+
       // La disponibilite d'ABORD, comme dans `createMovementTx` : une annulation ne
       // peut pas rendre une cellule negative. Ce controle ne se confond pas avec
       // l'empietement D20 — celui-la dit « tu prends sur une promesse », celui-ci dit
@@ -650,6 +686,22 @@ export async function reactivateMovement(
           `Stock insuffisant pour réactiver ce mouvement (disponible : ${toNumber(stockCellule)})`,
         );
       }
+
+      // Prévention stock négatif : réactiver retire à nouveau du stock
+      await assertNoNegativeStock(
+        {
+          articleId: retirant.articleId,
+          lotId: retirant.lotId,
+          depotId: retirant.depotId,
+          locationId: retirant.locationId,
+          quantity: toNumber(retirant.quantity, 3),
+          type: retirant.type.code,
+          confirmToken: confirmToken ?? null,
+        },
+        retirant.sens < 0 ? -1 : retirant.sens,
+        userId,
+        tx,
+      );
 
       amputations = await assertNoReservedOverlap(
         {
@@ -884,6 +936,24 @@ export async function updateMovement(
           `Stock insuffisant pour cet article (disponible : ${toNumber(stockCellule)})`,
         );
       }
+    }
+
+    // Prévention stock négatif sur modification
+    if (sens < 0) {
+      await assertNoNegativeStock(
+        {
+          articleId: input.articleId,
+          lotId: input.lotId,
+          depotId: input.depotId,
+          locationId: input.locationId,
+          quantity: input.quantity,
+          type: input.type,
+          confirmToken: (input as any).confirmToken ?? null,
+        },
+        sens,
+        userId,
+        tx,
+      );
     }
     if (input.type === MoveTypeCode.RETOUR) {
       await assertRetourCoherent(input, tx, moveId);

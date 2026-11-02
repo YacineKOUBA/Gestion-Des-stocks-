@@ -151,7 +151,7 @@ export interface Lot {
   unitPrice: string | null;
   observation?: string | null;
   quantity: number;
-  /** Lot masque par defaut (deja mouvement, stock ACTIF a zero) : visible si includeExhausted. */
+  /** Lot masque par defaut des que son stock ACTIF est a zero : visible si includeExhausted. */
   exhausted?: boolean;
   /** Total SORTIE du lot (depart client) et date de derniere sortie : sert au RETOUR. */
   sortiQty?: number;
@@ -229,7 +229,7 @@ export interface Movement {
   currency: string;
   movementDate: string;
   observation: string | null;
-  /** Ajustement négatif : nature (PERTE, VOLE, CASSE) et motif libre. */
+  /** Ajustement négatif : nature (PERTE, VOLE, CASSE, REBUT) et motif libre. */
   adjustNature: string | null;
   adjustMotif: string | null;
   status: MoveStatus;
@@ -374,20 +374,24 @@ export interface ReservationAllocation {
  *   overlap = X + Z − Y, exactement ce que l'accord autorise a prelever.
  */
 export interface ReservationOverlapConfirmation {
-  stockCellule: number;
-  reserve: number;
-  quantite: number;
-  overlap: number;
+  stockCellule?: number;
+  reserve?: number;
+  quantite?: number;
+  overlap?: number;
   lotNumber: string | null;
   lotId: number | null;
   depotId: number;
   locationId: number | null;
   articleId: number;
   operation: string;
-  reservations: { id: string; ref: string; amputee: number }[];
+  reservations?: { id: string; ref: string; amputee: number }[];
   message: string;
   /** Jeton signe, a renvoyer tel quel avec la meme operation pour confirmer. */
   confirmToken: string;
+  /** Stock négatif : contexte. */
+  stockActuel?: number;
+  quantiteDemandee?: number;
+  stockApres?: number;
 }
 
 export interface Reservation {

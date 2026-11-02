@@ -77,7 +77,9 @@ export function BonFormModal({
     ids.forEach(async (id) => {
       if (lotOptions[id] !== undefined) return;
       try {
-        const lots = await lotsApi.list({ articleId: id });
+        // Un bon peut referencer un lot deja vide (creation depuis un mouvement ancien) :
+        // on garde tous les lots, y compris ceux a stock zero.
+        const lots = await lotsApi.list({ articleId: id, includeExhausted: true });
         if (!cancelled) setLotOptions((prev) => ({ ...prev, [id]: lots }));
       } catch {
         if (!cancelled) setLotOptions((prev) => ({ ...prev, [id]: [] }));
@@ -116,7 +118,7 @@ export function BonFormModal({
     if (article?.currency) setForm((prev) => ({ ...prev, currency: article.currency }));
     if (articleId && lotOptions[articleId] === undefined) {
       try {
-        const lots = await lotsApi.list({ articleId });
+        const lots = await lotsApi.list({ articleId, includeExhausted: true });
         setLotOptions((prev) => ({ ...prev, [articleId]: lots }));
         // Un seul lot disponible : le selectionner automatiquement (prix du lot si defini).
         if (lots.length === 1) {

@@ -38,7 +38,7 @@ const MOVE_TYPE_LABELS: Record<string, string> = {
 };
 
 /** Natures proposées pour un ajustement NÉGATIF (sortie de stock). */
-const ADJUST_NATURES = ['PERTE', 'VOLE', 'CASSE'] as const;
+const ADJUST_NATURES = ['PERTE', 'VOLE', 'CASSE', 'REBUT'] as const;
 
 /** Libelle affichable d'un type de mouvement ; un code inconnu reste lisible. */
 function moveTypeLabel(code: string | null | undefined): string {
@@ -604,15 +604,20 @@ function MovementFormModal({
   const [overlap, setOverlap] = useState<ReservationOverlapConfirmation | null>(null);
   const dernierPayload = useRef<MovementPayload | null>(null);
 
-  // Un RETOUR propose aussi les lots masques pour fin de quantite : la marchandise
-  // revient sur le lot dont elle est sortie, meme si ce lot est aujourd'hui a zero.
+  // Toutes les operations qui font ENTRER du stock doivent pouvoir cibler un lot a zero :
+  // reception d'un lot neuf, retour sur un lot vide, inventaire ou ajustement positif.
   const isRetour = form.type === 'RETOUR';
+  const inclureLotsVides =
+    isRetour ||
+    form.type === 'ENTREE' ||
+    form.type === 'INVENTAIRE' ||
+    (form.type === 'AJUSTEMENT' && form.sens === '1');
   const lots = useAsync(
     () =>
       form.articleId
-        ? lotsApi.list({ articleId: Number(form.articleId), includeExhausted: isRetour })
+        ? lotsApi.list({ articleId: Number(form.articleId), includeExhausted: inclureLotsVides })
         : Promise.resolve([] as Lot[]),
-    [form.articleId, isRetour],
+    [form.articleId, inclureLotsVides],
     { label: 'Lots' },
   );
 
@@ -689,7 +694,7 @@ function MovementFormModal({
     if (!(Number(form.quantity) > 0)) errors.push('saisissez une quantité supérieure à 0');
     if (isTransfer && !form.depotDestId) errors.push('sélectionnez un dépôt de destination');
     if (isAjustementNegatif && !form.adjustNature) {
-      errors.push("sélectionnez la nature de l'ajustement (PERTE, VOLE ou CASSE)");
+      errors.push("sélectionnez la nature de l'ajustement (PERTE, VOLE, CASSE ou REBUT)");
     }
     if (isAjustementNegatif && !form.adjustMotif.trim()) {
       errors.push("renseignez le motif de l'ajustement");

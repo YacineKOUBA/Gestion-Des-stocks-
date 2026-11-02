@@ -11,7 +11,14 @@ export function UsersPage() {
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<User | null>(null);
   const [deleting, setDeleting] = useState<User | null>(null);
+  // Filtre d'affichage par rôle. La liste des comptes reste chargee en entier :
+  // le filtrage est purement visuel et ne relance pas la requete.
+  const [roleId, setRoleId] = useState('');
   const users = useAsync(() => usersApi.list(), []);
+  const roles = useAsync(() => referentialApi.roles(), [], { label: 'Rôles' });
+  const visibleUsers = (users.data ?? []).filter(
+    (u) => !roleId || String(u.roleId) === roleId,
+  );
 
   const columns: Column<User>[] = [
     { key: 'login', header: 'Identifiant' },
@@ -37,6 +44,23 @@ export function UsersPage() {
           ) : null
         }
       />
+
+      <Card>
+        <div className="filters">
+          <select
+            value={roleId}
+            onChange={(e) => setRoleId(e.target.value)}
+            aria-label="Filtrer par rôle"
+          >
+            <option value="">Tous les rôles</option>
+            {roles.data?.map((r) => (
+              <option key={r.id} value={String(r.id)}>
+                {r.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      </Card>
 
       <Card>
         {users.error ? <ErrorMessage message={users.error} /> : null}
@@ -79,9 +103,9 @@ export function UsersPage() {
                   ]
                 : []),
             ]}
-            rows={users.data ?? []}
+            rows={visibleUsers}
             rowKey={(u) => u.id}
-            empty="Aucun utilisateur."
+            empty={roleId ? 'Aucun utilisateur pour ce rôle.' : 'Aucun utilisateur.'}
           />
         )}
       </Card>

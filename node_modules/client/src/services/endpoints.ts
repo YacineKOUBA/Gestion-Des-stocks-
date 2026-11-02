@@ -142,7 +142,7 @@ export interface MovementPayload {
   observation?: string | null;
   /** Ajustement : sens 1 = entrée (+) / -1 = sortie (−). */
   sens?: number | null;
-  /** Ajustement négatif : nature (PERTE, VOLE, CASSE) et motif libre. */
+  /** Ajustement négatif : nature (PERTE, VOLE, CASSE, REBUT) et motif libre. */
   adjustNature?: string | null;
   adjustMotif?: string | null;
   /** D20 : jeton signe renvoye apres confirmation d'un empietement de reservation. */
@@ -179,7 +179,7 @@ export const lotsApi = {
     request<Lot>('/lots', { method: 'POST', body: payload }),
   update: (id: number, payload: Partial<{ articleId: number; lotNumber: string; fabricDate?: string | null; expiryDate?: string | null; unitPrice?: number | null; observation?: string | null }>) =>
     request<Lot>(`/lots/${id}`, { method: 'PUT', body: payload }),
-  /** Suppression définitive (réservée à l'administrateur) : seulement si le lot n'a jamais servi. */
+  /** Suppression définitive (réservée à l'administrateur) : seulement si le stock du lot est à zéro. */
   remove: (id: number) => request<{ id: number }>(`/lots/${id}`, { method: 'DELETE' }),
 };
 
@@ -219,7 +219,7 @@ export const loansApi = {
       suggested: { depotId: number; label: string; nbLignes: number; nbArticles: number };
       parDepot: { depotId: number; label: string; nbLignes: number; nbArticles: number }[];
     }>('/loans/depot-suggestion'),
-  restitute: (payload: { loanId: string; type: RestitutionType; quantity: number; restDate: string; confirmToken?: string | null }) =>
+  restitute: (payload: { loanId: string; type: RestitutionType; quantity: number; restDate: string; lotId?: number | null; confirmToken?: string | null }) =>
     request('/loans/restitution', { method: 'POST', body: payload }),
 };
 

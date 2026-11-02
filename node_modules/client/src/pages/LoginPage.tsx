@@ -40,7 +40,7 @@ export function LoginPage() {
           <img className="brand-logo" src="/logo-gd-alpha.png" alt="GD Trading" />
         </div>
         <h1>Gestion des stocks</h1>
-        <div className="login-version">V 10/26</div>
+        <div className="login-version">V11/26</div>
         <ErrorMessage message={error} />
         <label className="field">
           <span className="field-label">Identifiant</span>

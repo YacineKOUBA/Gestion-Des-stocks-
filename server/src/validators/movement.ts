@@ -5,7 +5,7 @@ import { CURRENCY_CODES } from '../utils/currencies';
 export const moveTypeEnum = z.nativeEnum(MoveTypeCode);
 
 /** Natures proposees pour un ajustement NEGATIF (sortie de stock). */
-export const ADJUST_NATURES = ['PERTE', 'VOLE', 'CASSE'] as const;
+export const ADJUST_NATURES = ['PERTE', 'VOLE', 'CASSE', 'REBUT'] as const;
 
 export const movementSchema = z
   .object({
@@ -42,7 +42,7 @@ export const movementSchema = z
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['adjustNature'],
-        message: 'La nature est obligatoire pour un ajustement négatif (PERTE, VOLE, CASSE).',
+        message: 'La nature est obligatoire pour un ajustement négatif (PERTE, VOLE, CASSE, REBUT).',
       });
     }
     if (!v.adjustMotif) {

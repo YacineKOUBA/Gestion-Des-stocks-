@@ -242,6 +242,14 @@ a {
   flex-wrap: wrap;
 }
 
+.filter-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
 /* Inputs */
 input,
 select,

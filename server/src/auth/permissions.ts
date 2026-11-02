@@ -17,8 +17,8 @@ import type { RoleCode } from '@prisma/client';
  *
  * - `article:write`        creation, modification, prix, suppression
  * - `lot:write`           creation et modification d'un lot (droit du magasinier)
- * - `lot:delete`          suppression DEFINITIVE d'un lot JAMAIS mouvemente (droit de
- *                          l'administrateur). Distinct de `write` car un magasinier cree
+ * - `lot:delete`          suppression DEFINITIVE d'un lot dont le stock est a ZERO (droit
+ *                          de l'administrateur). Distinct de `write` car un magasinier cree
  *                          et corrige un lot, mais ne doit pas effacer une reference.
  * - `movement:write`       saisie d'un mouvement
  * - `movement:revise`      annulation, reactivation, suppression (correction apres coup)

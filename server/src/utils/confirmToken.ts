@@ -2,6 +2,8 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 
 /**
  * D20, decision 7 : le depassement de stock reserve se confirme par un JETON.
+ * Etendu : toute operation susceptible de générer un stock négatif doit aussi
+ * faire l'objet d'un avertissement explicite avec confirmation.
  *
  * Le serveur refuse d'abord l'ecriture (409) et renvoie un jeton. Le client
  * affiche la demande de confirmation a l'utilisateur ; si il accepte, il

@@ -49,6 +49,8 @@ export const restitutionSchema = z.object({
   type: z.nativeEnum(RestitutionType),
   quantity: z.number().positive(),
   restDate: z.coerce.date(),
+  // Lot saisi librement avec suggestion (facultatif) pour la restitution.
+  lotId: z.number().int().positive().nullish(),
   // RESTITUTION_EMPRUNT sort du stock : meme controle d'empietement que le pret.
   confirmToken: z.string().max(4000).nullish(),
 });

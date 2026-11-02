@@ -16,20 +16,30 @@ export function LotsPage() {
   const { can } = useAuth();
   const [flag, setFlag] = useState('');
   const [search, setSearch] = useState('');
+  // Les lots dont le stock est a ZERO sont masques par defaut (epuises), y compris les
+  // lots neufs pas encore receptionnes. L'admin les affiche pour les consulter ou les
+  // supprimer ; l'état de la case est la seule source de verite.
+  const [includeExhausted, setIncludeExhausted] = useState(false);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<Lot | null>(null);
   const lots = useAsync(
-    () => lotsApi.list({ flag: flag || undefined, search: search.trim() || undefined }),
-    [flag, search],
+    () =>
+      lotsApi.list({
+        flag: flag || undefined,
+        search: search.trim() || undefined,
+        includeExhausted,
+      }),
+    [flag, search, includeExhausted],
   );
 
-  // Suppression definitive, alignee sur la regle serveur (D24) : refusee si le lot a deja
-  // servi. Le serveur reste seul juge ; on se contente de prevenir et de remonter son message.
+  // Suppression definitive, alignee sur la regle serveur : autorisee seulement si le
+  // stock est a zero. L'historique est conserve mais detache de ce lot (SET NULL).
   async function handleDelete(l: Lot) {
     if (
       !window.confirm(
         `Supprimer définitivement le lot « ${l.lotNumber} » ?\n` +
-          "Autorisé uniquement si le lot n'a jamais servi (aucun mouvement, réservation, bon ou inventaire). " +
+          'Suppression autorisée uniquement si son stock est à zéro. ' +
+          "L'historique des mouvements, réservations et prêts est conservé, mais ne sera plus rattaché à ce lot. " +
           "L'opération est tracée dans le journal d'audit.",
       )
     )
@@ -46,7 +56,12 @@ export function LotsPage() {
   const columns: Column<Lot>[] = [
     { key: 'lotNumber', header: 'N° lot' },
     { key: 'article', header: 'Article', render: (l) => (l.article ? `${l.article.code} — ${l.article.designation}` : '—') },
-    { key: 'quantity', header: 'Stock disponible', align: 'right', render: (l) => <Qty value={l.quantity} /> },
+    { key: 'quantity', header: 'Stock disponible', align: 'right', render: (l) => (
+      <span>
+        <Qty value={l.quantity} />
+        {l.exhausted ? <span className="muted"> (épuisé)</span> : null}
+      </span>
+    ) },
     {
       key: 'unitPrice',
       header: 'Prix unitaire',
@@ -123,13 +138,21 @@ export function LotsPage() {
             onChange={(e) => setSearch(e.target.value)}
           />
           <select value={flag} onChange={(e) => setFlag(e.target.value)}>
-            <option value="">Tous les lots</option>
+            <option value="">Toutes les alertes</option>
             {FLAGS.map((f) => (
               <option key={f} value={f}>
                 {f}
               </option>
             ))}
           </select>
+          <label className="filter-check">
+            <input
+              type="checkbox"
+              checked={includeExhausted}
+              onChange={(e) => setIncludeExhausted(e.target.checked)}
+            />
+            Afficher les lots épuisés (stock 0)
+          </label>
         </div>
       </Card>
 
@@ -138,7 +161,12 @@ export function LotsPage() {
         {lots.loading && !lots.data ? (
           <Spinner />
         ) : (
-          <DataTable columns={columns} rows={lots.data ?? []} rowKey={(l) => l.id} empty="Aucun lot." />
+          <DataTable
+            columns={columns}
+            rows={lots.data ?? []}
+            rowKey={(l) => l.id}
+            empty="Aucun lot."
+          />
         )}
       </Card>
 
@@ -150,6 +178,8 @@ export function LotsPage() {
             setEditing(null);
           }}
           onSaved={() => {
+            // Un lot neuf est a stock zero : sans cette case, il disparaitrait aussitot.
+            if (creating) setIncludeExhausted(true);
             setCreating(false);
             setEditing(null);
             lots.reload();

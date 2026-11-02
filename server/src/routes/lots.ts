@@ -16,8 +16,9 @@ router.get('/', requirePermission('lot:read'), async (req, res) => {
   const flag = req.query.flag as string | undefined;
   const articleId = req.query.articleId ? Number(req.query.articleId) : undefined;
   const search = (req.query.search as string | undefined)?.trim();
-  // includeExhausted : les lots epuises restent normally masques, mais un RETOUR doit
-  // pouvoir cibler un lot parti a zero (le lot masque, ou son stock est revenu a zero).
+  // includeExhausted : les lots a stock ZERO restent masques par defaut. Les operations
+  // qui font entrer du stock (reception, retour, inventaire, ajustement positif) doivent
+  // pouvoir cibler un lot vide, y compris un lot neuf jamais mouvemente.
   const includeExhausted = req.query.includeExhausted === 'true';
   const now = new Date();
 
@@ -56,9 +57,9 @@ router.get('/', requirePermission('lot:read'), async (req, res) => {
   });
 
   // Quantite disponible PAR LOT : somme des mouvements actifs de CE lot uniquement
-  // (independante des autres lots du meme article). Un lot epuise (solde revenu a zero
-  // apres avoir ete stocke) est masque : plus rien a sortir, il n'a pas sa place dans les
-  // listes ni dans les selecteurs. Il reapparait des que du stock revient.
+  // (independante des autres lots du meme article). Un lot epuise (solde exactement a
+  // zero, meme sans mouvement) est masque par defaut : plus rien a sortir. Il reapparait
+  // avec includeExhausted, ou des que du stock revient.
   const stocks = await lotStocks(lots.map((l) => l.id));
   const visibles = includeExhausted ? lots : lots.filter((l) => !isLotExhausted(stocks.get(l.id)));
 
@@ -147,12 +148,14 @@ router.put('/:id', requirePermission('lot:write'), async (req, res) => {
 
 // Suppression DEFINITIVE d'un lot, reservee a l'administrateur (`lot:delete`).
 //
-// Garde-fou de tracabilite (D24) : un lot n'est effacable que s'il n'a JAMAIS servi.
-// Des qu'il est reference par un mouvement de stock, une allocation de reservation, une
-// ligne de bon ou une ligne d'inventaire, il porte un historique : le supprimer ferait
-// disparaitre (ou detacherait) la trace du stock. On refuse alors, en renvoyant vers la
-// correction normale (mouvement de sortie / ajustement d'inventaire) plutot que d'effacer.
-// Le cas vise est le lot cree par erreur (mauvais article, doublon) et jamais mouvemente.
+// Regle : un lot ne peut etre supprime que si son STOCK ACTIF est exactement a zero.
+// L'historique (mouvements, reservations terminees, bons, inventaires clotures) ne bloque
+// plus : les cles etrangeres sont en ON DELETE SET NULL, donc la suppression detache le
+// lot de ces lignes sans effacer les operations elles-memes. Le journal d'audit conserve
+// l'article et le numero du lot supprime.
+//
+// En revanche, un lot encore engage reste protege : stock positif, reservation ACTIVE,
+// pret/emprunt non solde ou inventaire ouvert. Il faut d'abord solder l'operation.
 router.delete('/:id', requirePermission('lot:delete'), async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) {
@@ -162,18 +165,49 @@ router.delete('/:id', requirePermission('lot:delete'), async (req, res) => {
   const lot = await prisma.lot.findUnique({ where: { id } });
   if (!lot) throw notFound('Lot introuvable');
 
-  const [moves, allocations, bonLines, inventoryLines] = await Promise.all([
-    prisma.move.count({ where: { lotId: id } }),
-    prisma.reservationAllocation.count({ where: { lotId: id } }),
-    prisma.bonLine.count({ where: { lotId: id } }),
-    prisma.inventoryLine.count({ where: { lotId: id } }),
-  ]);
+  const [stocks, moves, allocations, bonLines, inventoryLines, activeAllocations, openLoans, openInventoryLines] =
+    await Promise.all([
+      lotStocks([id]),
+      prisma.move.count({ where: { lotId: id } }),
+      prisma.reservationAllocation.count({ where: { lotId: id } }),
+      prisma.bonLine.count({ where: { lotId: id } }),
+      prisma.inventoryLine.count({ where: { lotId: id } }),
+      prisma.reservationAllocation.count({ where: { lotId: id, reservation: { status: 'ACTIF' } } }),
+      prisma.loan.count({
+        where: { move: { is: { lotId: id } }, status: { in: ['OUVERT', 'PARTIEL'] } },
+      }),
+      prisma.inventoryLine.count({ where: { lotId: id, inventory: { status: 'OUVERTE' } } }),
+    ]);
 
-  if (moves + allocations + bonLines + inventoryLines > 0) {
+  const stock = stocks.get(id)?.quantity ?? new Prisma.Decimal(0);
+  if (stock.greaterThan(0)) {
     throw conflict(
-      'Suppression impossible : ce lot est déjà utilisé (mouvements de stock, réservations, ' +
-        'bons ou inventaires). Pour corriger le stock, passez par un mouvement de sortie ou un ' +
-        "ajustement d'inventaire : ces opérations restent tracées.",
+      `Suppression impossible : ce lot contient encore ${toNumber(stock, 3)} unité(s) en stock. ` +
+        'Sortez ou ajustez le stock jusqu’à zéro avant de le supprimer.',
+    );
+  }
+  if (stock.lessThan(0)) {
+    throw conflict(
+      `Suppression impossible : le stock de ce lot est négatif (${toNumber(stock, 3)}). ` +
+        "Corrigez d'abord cette anomalie par un mouvement d'entrée ou un ajustement.",
+    );
+  }
+  if (activeAllocations > 0) {
+    throw conflict(
+      'Suppression impossible : ce lot est promis par une réservation active. ' +
+        'Annulez ou validez cette réservation avant de le supprimer.',
+    );
+  }
+  if (openLoans > 0) {
+    throw conflict(
+      'Suppression impossible : un prêt/emprunt en cours utilise ce lot. ' +
+        'Attendez sa restitution complète avant de le supprimer.',
+    );
+  }
+  if (openInventoryLines > 0) {
+    throw conflict(
+      'Suppression impossible : ce lot figure dans un inventaire ouvert. ' +
+        "Clôturez l'inventaire avant de le supprimer.",
     );
   }
 
@@ -182,6 +216,10 @@ router.delete('/:id', requirePermission('lot:delete'), async (req, res) => {
   await audit(req.user!.id, 'SUPPRESSION', 'lot', String(id), {
     articleId: lot.articleId,
     lotNumber: lot.lotNumber,
+    stock: toNumber(stock, 3),
+    // References historiques detachees par ON DELETE SET NULL, conservees ici pour
+    // savoir ce que la suppression a delie sans effacer les operations.
+    detachedReferences: { moves, allocations, bonLines, inventoryLines },
   });
 
   res.json({ id: lot.id });
