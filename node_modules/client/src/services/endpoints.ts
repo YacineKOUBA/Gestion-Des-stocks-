@@ -150,7 +150,7 @@ export interface MovementPayload {
 }
 
 export const movementsApi = {
-  list: (filters: { articleId?: number; depotId?: number; lotId?: number; type?: string; excludeType?: string; from?: string; to?: string; limit?: number; offset?: number } = {}): Promise<Paged<Movement>> =>
+  list: (filters: { articleId?: number; depotId?: number; lotId?: number; partnerId?: number; partnerSearch?: string; type?: string; excludeType?: string; from?: string; to?: string; limit?: number; offset?: number } = {}): Promise<Paged<Movement>> =>
     requestPaged<Movement>('/movements', { query: { ...filters } }),
   create: (payload: MovementPayload) => request<Movement | { sortie: Movement; entree: Movement }>('/movements', { method: 'POST', body: payload }),
   // D30 : modification d'une ligne existante (administrateur, `movement:edit`). Meme

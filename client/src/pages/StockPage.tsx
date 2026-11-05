@@ -4,8 +4,8 @@ import { useAsync } from '../hooks/useAsync';
 import { Badge, Card, ErrorMessage, Modal, PageHeader, Spinner, observationTone } from '../components/ui';
 import { DataTable, type Column } from '../components/DataTable';
 import { Qty } from '../components/Qty';
-import type { StockRow, ThresholdRow } from '../types';
-import { formatDate, formatNumber, formatPercent } from '../utils/format';
+import type { StockRow } from '../types';
+import { formatDate, formatPercent } from '../utils/format';
 
 export function StockPage() {
   const [search, setSearch] = useState('');
@@ -13,7 +13,7 @@ export function StockPage() {
   const [categoryId, setCategoryId] = useState('');
   const [group, setGroup] = useState<'article' | 'full'>('article');
   const [selectedArticle, setSelectedArticle] = useState<number | null>(null);
-  const [selectedThreshold, setSelectedThreshold] = useState<ThresholdRow | null>(null);
+  // const [selectedThreshold, setSelectedThreshold] = useState<ThresholdRow | null>(null);
 
   const depots = useAsync(() => stockApi.depots(), [], { label: 'Dépôts' });
   const categories = useAsync(() => stockApi.categories(), [], { label: 'Catégories' });
@@ -27,11 +27,6 @@ export function StockPage() {
       }),
     [group, search, depotId, categoryId],
   );
-
-  // Libelle de la categorie choisie : la carte des seuils filtre sur ThresholdRow.category,
-  // qui porte le libelle de la categorie et non son identifiant.
-  const selectedCategoryLabel =
-    categories.data?.find((c) => String(c.id) === categoryId)?.label ?? '';
 
   const columns: Column<StockRow>[] = [
     { key: 'articleCode', header: 'Code' },
@@ -119,118 +114,22 @@ export function StockPage() {
         )}
       </Card>
 
+      {/* Masqué temporairement jusqu'à nouvel ordre
       <ThresholdsCard
         search={search}
         categoryLabel={selectedCategoryLabel}
         onSelect={setSelectedThreshold}
       />
+      */}
 
       {selectedArticle !== null ? (
         <ArticleStockDetail articleId={selectedArticle} onClose={() => setSelectedArticle(null)} />
       ) : null}
 
-      {selectedThreshold !== null ? (
+      {/* {selectedThreshold !== null ? (
         <ThresholdDetail row={selectedThreshold} onClose={() => setSelectedThreshold(null)} />
-      ) : null}
+      ) : null} */}
     </>
-  );
-}
-
-function ThresholdsCard({
-  search,
-  categoryLabel,
-  onSelect,
-}: {
-  search: string;
-  categoryLabel: string;
-  onSelect: (row: ThresholdRow) => void;
-}) {
-  const thresholds = useAsync(() => stockApi.thresholds(), []);
-  const needle = search.trim().toLowerCase();
-  // Les seuils sont telecharges en une fois (le serveur ne filtre pas sur la categorie),
-  // donc la restriction se fait ici, sur le libelle de categorie porte par chaque ligne.
-  const filtered = (thresholds.data ?? []).filter(
-    (r) =>
-      (!categoryLabel || r.category === categoryLabel) &&
-      (!needle ||
-        r.code.toLowerCase().includes(needle) ||
-        r.designation.toLowerCase().includes(needle)),
-  );
-
-  const columns: Column<ThresholdRow>[] = [
-    { key: 'code', header: 'Code' },
-    { key: 'designation', header: 'Désignation' },
-    { key: 'stockDisponible', header: 'Disponible', align: 'right', render: (r) => <Qty value={r.stockDisponible} /> },
-    { key: 'stockMin', header: 'Min', align: 'right', render: (r) => <Qty value={r.stockMin} /> },
-    { key: 'stockAlerte', header: 'Alerte', align: 'right', render: (r) => <Qty value={r.stockAlerte} /> },
-    { key: 'stockMax', header: 'Max', align: 'right', render: (r) => <Qty value={r.stockMax} /> },
-    { key: 'couvStock', header: 'Couv. (j)', align: 'right', render: (r) => formatNumber(r.couvStock, 1) },
-    {
-      key: 'observation',
-      header: 'Observation',
-      render: (r) => <Badge tone={observationTone[r.observation] ?? 'neutral'}>{r.observation}</Badge>,
-    },
-  ];
-
-  return (
-    <Card title="Seuils et observations">
-      {thresholds.error ? <ErrorMessage message={thresholds.error} /> : null}
-      {thresholds.loading && !thresholds.data ? (
-        <Spinner />
-      ) : (
-        <DataTable
-          columns={columns}
-          rows={filtered}
-          rowKey={(r) => r.articleId}
-          onRowClick={onSelect}
-          empty="Aucun article."
-        />
-      )}
-    </Card>
-  );
-}
-
-function ThresholdDetail({ row, onClose }: { row: ThresholdRow; onClose: () => void }) {
-  return (
-    <Modal title="Détail des seuils" onClose={onClose}>
-      <p className="muted">
-        <span className="strong">{row.code}</span> — {row.designation}
-      </p>
-      <div className="detail-summary">
-        <div>
-          <span className="muted">Stock disponible</span>
-          <strong><Qty value={row.stockDisponible} /></strong>
-        </div>
-        <div>
-          <span className="muted">Stock virtuel</span>
-          <strong><Qty value={row.stockVirtuel} /></strong>
-        </div>
-        <div>
-          <span className="muted">Sécurité</span>
-          <strong><Qty value={row.stockSecurite} /></strong>
-        </div>
-        <div>
-          <span className="muted">Minimum</span>
-          <strong><Qty value={row.stockMin} /></strong>
-        </div>
-        <div>
-          <span className="muted">Alerte</span>
-          <strong><Qty value={row.stockAlerte} /></strong>
-        </div>
-        <div>
-          <span className="muted">Maximum</span>
-          <strong><Qty value={row.stockMax} /></strong>
-        </div>
-        <div>
-          <span className="muted">Couverture (j)</span>
-          <strong>{formatNumber(row.couvStock, 1)}</strong>
-        </div>
-        <div>
-          <span className="muted">Observation</span>
-          <Badge tone={observationTone[row.observation] ?? 'neutral'}>{row.observation}</Badge>
-        </div>
-      </div>
-    </Modal>
   );
 }
 

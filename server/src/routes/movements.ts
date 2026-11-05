@@ -19,6 +19,10 @@ router.get('/', requirePermission('movement:read'), async (req, res) => {
   if (q.articleId) where.articleId = Number(q.articleId);
   if (q.depotId) where.depotId = Number(q.depotId);
   if (q.lotId) where.lotId = Number(q.lotId);
+  if (q.partnerId) where.partnerId = Number(q.partnerId);
+  if (q.partnerSearch) {
+    where.partner = { name: { contains: String(q.partnerSearch), mode: 'insensitive' } };
+  }
   if (q.type) where.type = { code: q.type };
   // Exclusion d'un type (utilisee par la page Mouvement pour retirer definitivement
   // la PERTE de la liste et du comptage). Elle s'applique au comptage ET a la

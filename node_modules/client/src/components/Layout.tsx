@@ -1,5 +1,5 @@
 import { NavLink, Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { clearLoadFailures } from '../hooks/loadFailures';
 import { LoadFailureBanner, Spinner } from './ui';
@@ -87,6 +87,7 @@ export function Layout() {
   const { user, can, signOut } = useAuth();
   const navigate = useNavigate();
   const { pathname } = useLocation();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // D28 : un echec de liste constate sur un ecran ne doit pas continuer
   // d'ecranter le suivant. Les enfants montent avant cet effet, mais leurs
@@ -94,6 +95,7 @@ export function Layout() {
   // avant que la page courante ne puisse signaler quoi que ce soit.
   useEffect(() => {
     clearLoadFailures();
+    setSidebarOpen(false);
   }, [pathname]);
 
   function handleLogout() {
@@ -103,7 +105,8 @@ export function Layout() {
 
   return (
     <div className="app-shell">
-      <aside className="sidebar">
+      <div className={`sidebar-overlay${sidebarOpen ? ' open' : ''}`} onClick={() => setSidebarOpen(false)} />
+      <aside className={`sidebar${sidebarOpen ? ' open' : ''}`}>
         <div className="brand">
           <span className="brand-mark-box">
             <img className="brand-logo" src="/logo-gd-alpha.png" alt="GD Trading" />
@@ -127,9 +130,23 @@ export function Layout() {
       </aside>
       <div className="main">
         <header className="topbar">
-          <div className="topbar-user">
-            <span className="user-name">{user?.displayName ?? user?.login}</span>
-            <span className="badge badge-neutral">{user?.roleLabel}</span>
+          <div className="topbar-left">
+            <button
+              type="button"
+              className="mobile-menu-btn"
+              onClick={() => setSidebarOpen(true)}
+              aria-label="Ouvrir le menu"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <line x1="3" y1="12" x2="21" y2="12"></line>
+                <line x1="3" y1="6" x2="21" y2="6"></line>
+                <line x1="3" y1="18" x2="21" y2="18"></line>
+              </svg>
+            </button>
+            <div className="topbar-user">
+              <span className="user-name">{user?.displayName ?? user?.login}</span>
+              <span className="badge badge-neutral">{user?.roleLabel}</span>
+            </div>
           </div>
           <button type="button" className="btn btn-ghost" onClick={handleLogout}>
             Déconnexion

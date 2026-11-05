@@ -68,6 +68,25 @@ a {
   flex-direction: column;
   gap: 18px;
 }
+
+.mobile-menu-btn {
+  display: none;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 8px;
+  color: var(--text);
+}
+
+.mobile-menu-btn svg {
+  width: 24px;
+  height: 24px;
+  display: block;
+}
+
+.sidebar-overlay {
+  display: none;
+}
 .brand {
   display: flex;
   align-items: center;
@@ -156,7 +175,14 @@ a {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 24px;
+  padding: 0 16px;
+  gap: 12px;
+}
+
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 .topbar-user {
   display: flex;
@@ -167,10 +193,19 @@ a {
   font-weight: 600;
 }
 .content {
-  padding: 24px;
+  padding: 16px;
   display: flex;
   flex-direction: column;
   gap: 18px;
+}
+
+@media (min-width: 768px) {
+  .topbar {
+    padding: 0 24px;
+  }
+  .content {
+    padding: 24px;
+  }
 }
 
 /* Page header */
@@ -949,4 +984,130 @@ input[type='checkbox'] {
   width: 110px;
   text-align: right;
   display: inline-block;
+}
+
+/* Responsive design for mobile */
+@media (max-width: 968px) {
+  .sidebar {
+    position: fixed;
+    left: 0;
+    top: 0;
+    height: 100vh;
+    z-index: 100;
+    transform: translateX(-100%);
+    transition: transform 0.3s ease;
+    overflow-y: auto;
+  }
+  
+  .sidebar.open {
+    transform: translateX(0);
+  }
+  
+  .sidebar-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 90;
+  }
+  
+  .sidebar-overlay.open {
+    display: block;
+  }
+  
+  .mobile-menu-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  
+  .page-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .page-actions {
+    width: 100%;
+  }
+  
+  .page-actions > * {
+    flex: 1;
+  }
+  
+  .card {
+    padding: 12px;
+  }
+  
+  .filters {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .filters > * {
+    width: 100%;
+  }
+  
+  .pagination {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .pagination-controls {
+    flex-wrap: wrap;
+    justify-content: space-between;
+  }
+  
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .modal-backdrop {
+    padding: 10px;
+  }
+  
+  .modal-body {
+    padding: 12px;
+    max-height: 85vh;
+  }
+  
+  .modal-header {
+    padding: 12px;
+  }
+  
+  .table-wrap {
+    margin: 0 -12px;
+    padding: 0 12px;
+  }
+  
+  .detail-summary {
+    flex-direction: column;
+    gap: 12px;
+  }
+  
+  .login-card {
+    padding: 24px 16px;
+  }
+  
+  .brand-large .brand-logo {
+    height: 60px;
+  }
+}
+
+@media (max-width: 640px) {
+  .topbar-user .user-name {
+    display: none;
+  }
+  
+  .kpi-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .tabs {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+  }
+  
+  .tab {
+    white-space: nowrap;
+  }
 }

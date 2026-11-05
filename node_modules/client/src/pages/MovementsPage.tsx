@@ -123,6 +123,8 @@ export function MovementsPage() {
   const { can } = useAuth();
   const [type, setType] = useState('');
   const [depotId, setDepotId] = useState('');
+  const [partnerId, setPartnerId] = useState('');
+  const [partnerSearch, setPartnerSearch] = useState('');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [pageSize, setPageSize] = useState(100);
@@ -163,6 +165,7 @@ export function MovementsPage() {
   }
 
   const depots = useAsync(() => referentialApi.depots(), [], { label: 'Dépôts' });
+  const partners = useAsync(() => referentialApi.partners(), [], { label: 'Acteurs' });
   const movements = useAsync(
     () =>
       movementsApi.list({
@@ -172,12 +175,14 @@ export function MovementsPage() {
         // compteraient des lignes invisibles.
         excludeType: 'PERTE',
         depotId: depotId ? Number(depotId) : undefined,
+        partnerId: partnerId ? Number(partnerId) : undefined,
+        partnerSearch: partnerSearch || undefined,
         from: from || undefined,
         to: to || undefined,
         limit: pageSize,
         offset,
       }),
-    [type, depotId, from, to, pageSize, offset],
+    [type, depotId, partnerId, partnerSearch, from, to, pageSize, offset],
   );
 
   // Un changement de filtre ou de taille de page doit revenir au début de la liste.
@@ -344,6 +349,27 @@ export function MovementsPage() {
               </option>
             ))}
           </select>
+          <div style={{ minWidth: 200 }}>
+            <SearchSelect
+              options={(partners.data ?? []).map((p) => ({ id: p.id, label: p.name }))}
+              value={partnerId ? Number(partnerId) : null}
+              onChange={(id) => {
+                setPartnerId(id ? String(id) : '');
+                setPartnerSearch('');
+                setOffset(0);
+              }}
+              placeholder="Filtrer par acteur..."
+            />
+          </div>
+          <input
+            placeholder="Rechercher par nom d'acteur"
+            value={partnerSearch}
+            onChange={(e) => {
+              setPartnerSearch(e.target.value);
+              setPartnerId('');
+              setOffset(0);
+            }}
+          />
           <input type="date" value={from} onChange={(e) => applyFilter(setFrom)(e.target.value)} />
           <input type="date" value={to} onChange={(e) => applyFilter(setTo)(e.target.value)} />
         </div>
