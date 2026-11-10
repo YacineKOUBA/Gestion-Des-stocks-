@@ -94,15 +94,23 @@ export async function createBon(data: BonInput, userId: number) {
   return bon;
 }
 
-export async function listBons() {
-  return prisma.bon.findMany({
-    include: {
-      partner: true,
-      depot: true,
-      lines: { include: { article: { select: { code: true, designation: true } } } },
-    },
-    orderBy: { createdAt: 'desc' },
-  });
+export async function listBons(params: { limit?: number; offset?: number } = {}) {
+  const limit = Math.min(Math.max(params.limit ?? 100, 1), 500);
+  const offset = Math.max(params.offset ?? 0, 0);
+  const [total, items] = await prisma.$transaction([
+    prisma.bon.count(),
+    prisma.bon.findMany({
+      include: {
+        partner: true,
+        depot: true,
+        lines: { include: { article: { select: { code: true, designation: true } } } },
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit,
+      skip: offset,
+    }),
+  ]);
+  return { items, total, limit, offset };
 }
 
 export async function getBon(id: bigint) {

@@ -270,7 +270,8 @@ export interface BonPayload {
 }
 
 export const bonsApi = {
-  list: () => request<Bon[]>('/bons'),
+  list: (filters: { limit?: number; offset?: number } = {}): Promise<Paged<Bon>> =>
+    requestPaged<Bon>('/bons', { query: { ...filters } }),
   get: (id: string) => request<Bon>(`/bons/${id}`),
   create: (payload: BonPayload) => request<Bon>('/bons', { method: 'POST', body: payload }),
 };

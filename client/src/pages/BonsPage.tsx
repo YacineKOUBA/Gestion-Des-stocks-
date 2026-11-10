@@ -4,7 +4,7 @@ import { useAsync } from '../hooks/useAsync';
 import { Card, ErrorMessage, Modal, PageHeader, Spinner } from '../components/ui';
 import { DataTable, type Column } from '../components/DataTable';
 import type { Bon } from '../types';
-import { formatDate, formatMoney } from '../utils/format';
+import { formatDate, formatMoney, formatNumber } from '../utils/format';
 import { Qty } from '../components/Qty';
 import { BonFormModal } from '../components/BonFormModal';
 import { useAuth } from '../context/AuthContext';
@@ -13,7 +13,9 @@ export function BonsPage() {
   const { can } = useAuth();
   const [creating, setCreating] = useState(false);
   const [detail, setDetail] = useState<Bon | null>(null);
-  const bons = useAsync(() => bonsApi.list(), []);
+  const [pageSize, setPageSize] = useState(100);
+  const [offset, setOffset] = useState(0);
+  const bons = useAsync(() => bonsApi.list({ limit: pageSize, offset }), [pageSize, offset]);
 
   const columns: Column<Bon>[] = [
     { key: 'ref', header: 'Référence' },
@@ -44,13 +46,62 @@ export function BonsPage() {
         {bons.loading && !bons.data ? (
           <Spinner />
         ) : (
-          <DataTable
-            columns={columns}
-            rows={bons.data ?? []}
-            rowKey={(b) => b.id}
-            onRowClick={(b) => setDetail(b)}
-            empty="Aucun bon."
-          />
+          <>
+            <DataTable
+              columns={columns}
+              rows={bons.data?.items ?? []}
+              rowKey={(b) => b.id}
+              onRowClick={(b) => setDetail(b)}
+              empty="Aucun bon."
+            />
+            {(() => {
+              const total = bons.data?.total ?? 0;
+              const firstShown = total === 0 ? 0 : offset + 1;
+              const lastShown = Math.min(offset + pageSize, total);
+              const canGoBack = offset > 0;
+              const canGoForward = offset + pageSize < total;
+              if (total <= pageSize && offset === 0) return null;
+              return (
+                <div className="pagination">
+                  <span className="muted">
+                    {formatNumber(firstShown)}–{formatNumber(lastShown)} sur {formatNumber(total)} documents
+                  </span>
+                  <div className="pagination-controls">
+                    <select
+                      value={pageSize}
+                      onChange={(e) => {
+                        setPageSize(Number(e.target.value));
+                        setOffset(0);
+                      }}
+                      aria-label="Lignes par page"
+                    >
+                      {[50, 100, 200, 500].map((n) => (
+                        <option key={n} value={n}>
+                          {n} / page
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      className="btn btn-small"
+                      disabled={!canGoBack}
+                      onClick={() => setOffset(Math.max(0, offset - pageSize))}
+                    >
+                      Précédent
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-small"
+                      disabled={!canGoForward}
+                      onClick={() => setOffset(offset + pageSize)}
+                    >
+                      Suivant
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+          </>
         )}
       </Card>
 

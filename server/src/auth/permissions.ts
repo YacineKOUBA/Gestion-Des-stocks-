@@ -161,9 +161,8 @@ const TOP_MANAGEMENT_PERMISSIONS: Permission[] = [
 /**
  * SALES_ADMIN : administration des ventes (D19).
  *
- * Cinq ecrans demandes par le directeur : etat de stock, articles, mouvement,
- * lots et peremption, en LECTURE SEULE, plus l'ecran Reservation en lecture et
- * en ecriture.
+ * Ecrans : etat de stock, articles, mouvement, lots et peremption en LECTURE SEULE,
+ * Reservation en lecture/ecriture, Prets/Emprunts en lecture/ecriture.
  *
  * Sur Reservation il peut creer et annuler, mais PAS valider : la validation
  * transforme les mouvements de blocage en SORTIES et autorise donc une sortie
@@ -173,11 +172,6 @@ const TOP_MANAGEMENT_PERMISSIONS: Permission[] = [
  * le filtre Categorie de l'ecran Article, le filtre Depot de l'ecran Mouvement
  * et le formulaire de Reservation (choix de l'acteur) en dependent. Il n'a ni
  * `referential:manage` ni `referential:write`.
- *
- * Aucun droit d'ecriture sur articles, mouvements et lots. Aucun acces au
- * tableau de bord, a l'inventaire, aux prets/emprunts, aux bons, a la
- * valorisation, aux utilisateurs, aux parametres ni au journal d'audit : ces
- * ecrans ne figuraient pas dans la demande.
  *
  * Il n'a PAS `dashboard:read`, et c'est voulu. La redirection vers le premier
  * ecran autorise remplace l'ancien renvoi en dur vers '/' : sans cela, ce profil
@@ -189,6 +183,8 @@ const SALES_ADMIN_PERMISSIONS: Permission[] = [
   'movement:read',
   'lot:read',
   'referential:read',
+  'loan:read',
+  'loan:write',
   'reservation:read',
   'reservation:write',
 ];
