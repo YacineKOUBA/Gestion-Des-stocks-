@@ -34,6 +34,16 @@ export const loanSchema = z.object({
   partnerId: z.number().int().positive(),
   articleId: z.number().int().positive(),
   lotId: z.number().int().positive().nullish(),
+  // EMPRUNT d'un lot qui n'existe pas encore dans notre base : le serveur le cree
+  // dans la MEME transaction que le mouvement d'entree. Interdit pour un PRET
+  // (on ne prete que ce que l'on possede deja) et exclusif avec `lotId` ; ces deux
+  // regles sont controlees dans createLoan, car elles dependent du type.
+  newLot: z
+    .object({
+      lotNumber: z.string().trim().min(1).max(50),
+      expiryDate: z.coerce.date().nullish(),
+    })
+    .nullish(),
   depotId: z.number().int().positive().nullish(),
   locationId: z.number().int().positive().nullish(),
   quantity: z.number().positive(),
@@ -51,6 +61,16 @@ export const restitutionSchema = z.object({
   restDate: z.coerce.date(),
   // Lot saisi librement avec suggestion (facultatif) pour la restitution.
   lotId: z.number().int().positive().nullish(),
+  // RESTITUTION_PRET d'un lot qui n'existe pas encore dans notre base : le retour
+  // fait ENTRER ce lot dans le stock, le serveur le cree dans la meme transaction.
+  // Interdit pour une RESTITUTION_EMPRUNT (le lot retourne chez le preteur ne doit
+  // pas etre cree chez nous) et exclusif avec `lotId`.
+  newLot: z
+    .object({
+      lotNumber: z.string().trim().min(1).max(50),
+      expiryDate: z.coerce.date().nullish(),
+    })
+    .nullish(),
   // RESTITUTION_EMPRUNT sort du stock : meme controle d'empietement que le pret.
   confirmToken: z.string().max(4000).nullish(),
 });

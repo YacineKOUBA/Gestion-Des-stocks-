@@ -279,7 +279,7 @@ export interface Loan {
   partnerId: number;
   partner?: Partner;
   articleId: number;
-  article?: { code: string; designation: string; unit?: { code: string } };
+  article?: { code: string; designation: string; isLotTracked?: boolean; unit?: { code: string } };
   quantity: string;
   loanDate: string;
   observation: string | null;

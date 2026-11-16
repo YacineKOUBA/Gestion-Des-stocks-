@@ -207,7 +207,7 @@ export const loansApi = {
       nbRestituees: number;
       nbRestitueesIncompletes: number;
     }>('/loans/synthesis'),
-  create: (payload: { type: LoanType; partnerId: number; articleId: number; lotId?: number | null; depotId?: number | null; locationId?: number | null; quantity: number; loanDate: string; observation?: string | null; confirmToken?: string | null }) =>
+  create: (payload: { type: LoanType; partnerId: number; articleId: number; lotId?: number | null; newLot?: { lotNumber: string; expiryDate?: string | null } | null; depotId?: number | null; locationId?: number | null; quantity: number; loanDate: string; observation?: string | null; confirmToken?: string | null }) =>
     request<Loan>('/loans', { method: 'POST', body: payload }),
   disponibilite: (params: { articleId: number; lotId?: number | null; depotId?: number | null; locationId?: number | null }) =>
     request<{ disponible: number; tousDepots: boolean; depotConseille: number; emplacementConseille: number | null }>(
@@ -219,7 +219,7 @@ export const loansApi = {
       suggested: { depotId: number; label: string; nbLignes: number; nbArticles: number };
       parDepot: { depotId: number; label: string; nbLignes: number; nbArticles: number }[];
     }>('/loans/depot-suggestion'),
-  restitute: (payload: { loanId: string; type: RestitutionType; quantity: number; restDate: string; lotId?: number | null; confirmToken?: string | null }) =>
+  restitute: (payload: { loanId: string; type: RestitutionType; quantity: number; restDate: string; lotId?: number | null; newLot?: { lotNumber: string; expiryDate?: string | null } | null; confirmToken?: string | null }) =>
     request('/loans/restitution', { method: 'POST', body: payload }),
 };
 

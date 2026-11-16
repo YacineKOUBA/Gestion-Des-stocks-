@@ -45,6 +45,13 @@ export interface MoveInput {
    * l'utilisateur a confirme. Sans jeton valide, l'ecriture est refusee.
    */
   confirmToken?: string | null;
+  /**
+   * Restitution : le lot est une SUGGESTION, pas une obligation. Certains produits
+   * en stock n'ont aucun lot, une restitution doit donc pouvoir se finaliser sans.
+   * Ce drapeau desactive UNIQUEMENT `assertLotRequired`; tous les controles de
+   * stock et d'empietement restent appliques.
+   */
+  lotFacultatif?: boolean;
 }
 
 type Db = Prisma.TransactionClient;
@@ -94,7 +101,7 @@ async function assertLotRequired(input: MoveInput, db: Db) {
     select: { isLotTracked: true, currency: true },
   });
   if (!article) throw notFound('Article introuvable');
-  if (article.isLotTracked && !input.lotId) {
+  if (article.isLotTracked && !input.lotId && !input.lotFacultatif) {
     throw badRequest("Le lot est obligatoire pour cet article (lot-tracé)");
   }
   return article;

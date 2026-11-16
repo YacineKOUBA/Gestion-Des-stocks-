@@ -211,7 +211,7 @@ export function ReservationPage() {
                     <>
                       <button
                         type="button"
-                        className="btn btn-small btn-primary"
+                        className="btn btn-small btn-success"
                         disabled={busy === r.id}
                         onClick={(e) => {
                           e.stopPropagation();
@@ -222,7 +222,7 @@ export function ReservationPage() {
                       </button>
                       <button
                         type="button"
-                        className="btn btn-small btn-danger"
+                        className="btn btn-small btn-danger-solid"
                         disabled={busy === r.id}
                         onClick={(e) => {
                           e.stopPropagation();
@@ -252,7 +252,7 @@ export function ReservationPage() {
                   {can('reservation:decide') ? (
                     <button
                       type="button"
-                      className="btn btn-small btn-primary"
+                      className="btn btn-small btn-success"
                       disabled={busy === r.id}
                       onClick={(e) => {
                         e.stopPropagation();
@@ -546,7 +546,7 @@ export function ReservationPage() {
               {can('reservation:decide') ? (
                 <button
                   type="button"
-                  className="btn btn-primary"
+                  className="btn btn-success"
                   disabled={busy === detail.id}
                   onClick={() => openValidation(detail)}
                 >

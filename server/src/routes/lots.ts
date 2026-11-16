@@ -84,15 +84,26 @@ router.get('/', requirePermission('lot:read'), async (req, res) => {
 // (donc ouvertes au magasinier). Elles le deviennent explicitement.
 router.post('/', requirePermission('lot:write'), async (req, res) => {
   const data = parse(lotSchema, req.body);
-  const lot = await prisma.lot.create({
-    data: {
-      articleId: data.articleId,
-      lotNumber: data.lotNumber,
-      fabricDate: data.fabricDate ?? null,
-      expiryDate: data.expiryDate ?? null,
-      unitPrice: data.unitPrice ?? null,
-      observation: data.observation ?? null,
-    },
+  // Un lot n'existe que pour un article suivi par lot : creer le premier lot d'un
+  // article coche donc automatiquement « suivi par lot » sur la fiche article.
+  // Sans cela, l'article resterait non suivi alors qu'il possede deja des lots, et
+  // les selecteurs de lot des mouvements ne s'afficheraient pas.
+  const lot = await prisma.$transaction(async (tx) => {
+    const created = await tx.lot.create({
+      data: {
+        articleId: data.articleId,
+        lotNumber: data.lotNumber,
+        fabricDate: data.fabricDate ?? null,
+        expiryDate: data.expiryDate ?? null,
+        unitPrice: data.unitPrice ?? null,
+        observation: data.observation ?? null,
+      },
+    });
+    await tx.article.updateMany({
+      where: { id: data.articleId, isLotTracked: false },
+      data: { isLotTracked: true },
+    });
+    return created;
   });
 
   // Le prix est propre au lot : jamais applique au prix de l'article (les autres lots
@@ -125,16 +136,24 @@ router.put('/:id', requirePermission('lot:write'), async (req, res) => {
     }
   }
 
-  const lot = await prisma.lot.update({
-    where: { id },
-    data: {
-      ...(data.articleId !== undefined ? { articleId: data.articleId } : {}),
-      ...(data.lotNumber !== undefined ? { lotNumber: data.lotNumber } : {}),
-      ...(data.fabricDate !== undefined ? { fabricDate: data.fabricDate } : {}),
-      ...(data.expiryDate !== undefined ? { expiryDate: data.expiryDate } : {}),
-      ...(data.unitPrice !== undefined ? { unitPrice: data.unitPrice } : {}),
-      ...(data.observation !== undefined ? { observation: data.observation } : {}),
-    },
+  const lot = await prisma.$transaction(async (tx) => {
+    const updated = await tx.lot.update({
+      where: { id },
+      data: {
+        ...(data.articleId !== undefined ? { articleId: data.articleId } : {}),
+        ...(data.lotNumber !== undefined ? { lotNumber: data.lotNumber } : {}),
+        ...(data.fabricDate !== undefined ? { fabricDate: data.fabricDate } : {}),
+        ...(data.expiryDate !== undefined ? { expiryDate: data.expiryDate } : {}),
+        ...(data.unitPrice !== undefined ? { unitPrice: data.unitPrice } : {}),
+        ...(data.observation !== undefined ? { observation: data.observation } : {}),
+      },
+    });
+    // Meme regle qu'a la creation : un article qui porte un lot est suivi par lot.
+    await tx.article.updateMany({
+      where: { id: updated.articleId, isLotTracked: false },
+      data: { isLotTracked: true },
+    });
+    return updated;
   });
 
   await audit(req.user!.id, 'MODIFICATION', 'lot', String(id), {

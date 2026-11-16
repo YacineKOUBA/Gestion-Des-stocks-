@@ -262,6 +262,12 @@ function LotFormModal({ lot, onClose, onSaved }: { lot?: Lot | null; onClose: ()
             placeholder="Rechercher un article…"
           />
         </Field>
+        {!lot ? (
+          <p className="muted" style={{ gridColumn: '1 / -1', margin: 0 }}>
+            La création d’un lot active automatiquement la case « suivi par lot » sur la fiche de
+            l’article.
+          </p>
+        ) : null}
         <Field label="N° de lot">
           <input value={form.lotNumber} onChange={(e) => update('lotNumber', e.target.value)} required />
         </Field>

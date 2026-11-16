@@ -381,7 +381,7 @@ CREATE TABLE notification_alert (
 2. **TRANSFERT** : 1 saisie -> 2 mouvements lies (link_movement_id), depot source != depot destination.
 3. **Annulation** : statut 'ANNULE' + audit (M10) ; pas de suppression physique.
 4. **Fusion des 2 journaux Excel (D1)** : les mouvements importes gardent leur date d'origine et sont tages origine 'MIGRATION'.
-5. **Lot** : obligatoire pour articles `is_lot_tracked = TRUE` (0.3) ; doublon (article, lot_number) interdit.
+5. **Lot** : obligatoire pour articles `is_lot_tracked = TRUE` (0.3) ; doublon (article, lot_number) interdit. **Exception : la restitution** d'un pret/emprunt accepte un lot vide (produits sans lot), le lot du mouvement d'origine servant alors de suggestion.
 6. **Code article** : genere depuis code_series selon la categorie (100/200/300/400), jamais modifiable (0.7).
 7. **Consommation mensuelle** : recalculable depuis les SORTIES (D3) a la cloture de chaque mois.
 8. **Inventaire** : ecart valide -> AJUSTEMENT ou PERTE (motif obligatoire pour PERTE), origine inventaire tracée ; campagne cloturee non modifiable.

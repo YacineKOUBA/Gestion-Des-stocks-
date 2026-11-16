@@ -10,8 +10,10 @@
   --sidebar: #1a1c22;
   --sidebar-hover: #262932;
   --green: #15803d;
+  --green-dark: #166534;
   --green-bg: #dcfce7;
   --red: #b91c1c;
+  --red-dark: #991b1b;
   --red-bg: #fee2e2;
   --orange: #b45309;
   --orange-bg: #fef3c7;
@@ -447,6 +449,23 @@ input[type='checkbox'] {
 }
 .btn-danger:hover {
   background: var(--red-bg);
+}
+/* Actions « approuver / refuser » : couleurs pleines pour lever toute ambiguite. */
+.btn-success {
+  background: var(--green);
+  border-color: var(--green);
+  color: #fff;
+}
+.btn-success:hover {
+  background: var(--green-dark);
+}
+.btn-danger-solid {
+  background: var(--red);
+  border-color: var(--red);
+  color: #fff;
+}
+.btn-danger-solid:hover {
+  background: var(--red-dark);
 }
 .btn-small {
   padding: 4px 9px;

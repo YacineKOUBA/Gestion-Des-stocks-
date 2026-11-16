@@ -1,6 +1,6 @@
 import { prisma } from '../prisma';
 import { LoanType, Prisma, RestitutionType } from '@prisma/client';
-import { badRequest, notFound } from '../utils/apiError';
+import { badRequest, conflict, notFound } from '../utils/apiError';
 import { audit } from '../utils/audit';
 import { createMovement } from './movementService';
 import { assertNoNegativeStock } from './nonNegativeStock';
@@ -152,6 +152,7 @@ export async function createLoan(
     partnerId: number;
     articleId: number;
     lotId?: number | null;
+    newLot?: { lotNumber: string; expiryDate?: Date | null } | null;
     depotId?: number | null;
     locationId?: number | null;
     quantity: number;
@@ -161,11 +162,51 @@ export async function createLoan(
   },
   userId: number,
 ) {
+  // Un lot neuf ne se conçoit que pour une ENTREE de stock (emprunt) et ne peut pas
+  // etre fourni en meme temps qu'un lot existant : deux sources pour le meme champ.
+  if (data.newLot && data.type !== LoanType.EMPRUNT) {
+    throw badRequest("Un nouveau lot ne peut être saisi que pour un emprunt.");
+  }
+  if (data.newLot && data.lotId) {
+    throw badRequest('Choisissez soit un lot existant, soit un nouveau lot.');
+  }
+
   // Le pret sort du stock (0.1 -> sortie), l'emprunt entre (entree).
   const loan = await prisma.$transaction(async (tx) => {
+    let lotId = data.lotId ?? null;
+    if (data.newLot) {
+      const lotNumber = data.newLot.lotNumber.trim().replace(/\s+/g, ' ');
+      // Unicite (article, numero) : on refuse un doublon en le signalant, avec l'id du
+      // lot existant pour que l'UI propose « Utiliser ce lot existant » plutot que de
+      // fusionner silencieusement deux lots physiques distincts.
+      const existing = await tx.lot.findFirst({
+        where: { articleId: data.articleId, lotNumber: { equals: lotNumber, mode: 'insensitive' } },
+        select: { id: true, lotNumber: true },
+      });
+      if (existing) {
+        throw conflict(`Le lot « ${existing.lotNumber} » existe déjà pour cet article.`, {
+          code: 'LOT_EXISTANT',
+          lot: { id: existing.id, lotNumber: existing.lotNumber },
+        });
+      }
+      const created = await tx.lot.create({
+        data: {
+          articleId: data.articleId,
+          lotNumber,
+          expiryDate: data.newLot.expiryDate ?? null,
+        },
+      });
+      // Meme regle que la page Lots : un article qui porte un lot est suivi par lot.
+      await tx.article.updateMany({
+        where: { id: data.articleId, isLotTracked: false },
+        data: { isLotTracked: true },
+      });
+      lotId = created.id;
+    }
+
     const target = await resolveStockTarget(
       data.articleId,
-      data.lotId ?? null,
+      lotId,
       { depotId: data.depotId, locationId: data.locationId },
       tx,
     );
@@ -173,7 +214,7 @@ export async function createLoan(
       {
         type: data.type === LoanType.PRET ? 'SORTIE' : 'ENTREE',
         articleId: data.articleId,
-        lotId: data.lotId ?? null,
+        lotId,
         locationId: target.locationId,
         quantity: data.quantity,
         movementDate: data.loanDate,
@@ -203,14 +244,33 @@ export async function createLoan(
   await audit(userId, 'CREATION', 'loan', String(loan.id), {
     type: data.type,
     movementId: loan.movementId,
+    ...(data.newLot ? { newLotNumber: data.newLot.lotNumber } : {}),
   });
   return loan;
 }
 
 export async function createRestitution(
-  data: { loanId: bigint; type: RestitutionType; quantity: number; restDate: Date; lotId?: number | null; confirmToken?: string | null },
+  data: {
+    loanId: bigint;
+    type: RestitutionType;
+    quantity: number;
+    restDate: Date;
+    lotId?: number | null;
+    newLot?: { lotNumber: string; expiryDate?: Date | null } | null;
+    confirmToken?: string | null;
+  },
   userId: number,
 ) {
+  // Une restitution de pret fait ENTRER le lot rendu : il peut ne pas encore exister
+  // chez nous. Une restitution d'emprunt, elle, SORT le lot pour le rendre au preteur :
+  // on ne peut pas creer un lot que l'on n'a jamais eu.
+  if (data.newLot && data.type !== RestitutionType.RESTITUTION_PRET) {
+    throw badRequest("Un nouveau lot ne peut être saisi que pour une restitution de prêt.");
+  }
+  if (data.newLot && data.lotId) {
+    throw badRequest('Choisissez soit un lot existant, soit un nouveau lot.');
+  }
+
   const rest = await prisma.$transaction(async (tx) => {
     const balance = await loanBalance(data.loanId, tx);
     if (balance < data.quantity) {
@@ -228,8 +288,38 @@ export async function createRestitution(
           select: { depotId: true, lotId: true, locationId: true },
         })
       : null;
-    // Le lot peut etre saisi librement avec suggestion : priorite au lot saisi, sinon celui du pret initial.
-    const lotIdRest = data.lotId ?? origin?.lotId ?? null;
+    // Le lot est une SUGGESTION : priorite au lot saisi, sinon celui du pret initial.
+    // Il reste facultatif (produits sans lot) : `lotFacultatif` leve uniquement
+    // l'obligation de lot-tracabilite, sans toucher aux controles de stock.
+    let lotIdRest = data.lotId ?? origin?.lotId ?? null;
+    if (data.newLot) {
+      const lotNumber = data.newLot.lotNumber.trim().replace(/\s+/g, ' ');
+      // Meme regle que pour un emprunt : doublon signale avec le lot existant, pour
+      // que l'UI propose « Utiliser ce lot existant » au lieu de fusionner en silence.
+      const existing = await tx.lot.findFirst({
+        where: { articleId: loan.articleId, lotNumber: { equals: lotNumber, mode: 'insensitive' } },
+        select: { id: true, lotNumber: true },
+      });
+      if (existing) {
+        throw conflict(`Le lot « ${existing.lotNumber} » existe déjà pour cet article.`, {
+          code: 'LOT_EXISTANT',
+          lot: { id: existing.id, lotNumber: existing.lotNumber },
+        });
+      }
+      const created = await tx.lot.create({
+        data: {
+          articleId: loan.articleId,
+          lotNumber,
+          expiryDate: data.newLot.expiryDate ?? null,
+        },
+      });
+      // Meme regle que la page Lots : un article qui porte un lot est suivi par lot.
+      await tx.article.updateMany({
+        where: { id: loan.articleId, isLotTracked: false },
+        data: { isLotTracked: true },
+      });
+      lotIdRest = created.id;
+    }
     if (moveType === 'SORTIE') {
       const target = await resolveStockTarget(
         loan.articleId,
@@ -271,6 +361,8 @@ export async function createRestitution(
         depotId: target.depotId,
         partnerId: loan.partnerId,
         observation: `RESTITUTION (${data.type})`,
+        // Le lot est suggere, jamais obligatoire pour une restitution.
+        lotFacultatif: true,
         // D20 : une RESTITUTION_EMPRUNT sort du stock, elle est donc controlee.
         confirmToken: data.confirmToken ?? null,
       },
@@ -304,6 +396,7 @@ export async function createRestitution(
   await audit(userId, 'CREATION', 'loan_restitution', String(rest.id), {
     type: data.type,
     movementId: rest.movementId,
+    ...(data.newLot ? { newLotNumber: data.newLot.lotNumber } : {}),
   });
   return rest;
 }
@@ -312,7 +405,7 @@ export async function listLoans() {
   const loans = await prisma.loan.findMany({
     include: {
       partner: true,
-      article: { select: { code: true, designation: true, unit: { select: { code: true } } } },
+      article: { select: { code: true, designation: true, isLotTracked: true, unit: { select: { code: true } } } },
       restitutions: true,
       move: {
         select: {

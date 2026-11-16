@@ -256,6 +256,8 @@ Le **pourcentage reserve est un indicateur de tension, pas une regle** : apres u
 
 **Champs :** client (acteur), operation, date, article/produit, quantite, unite, observation (ex. "A RESTITUER (ECHANGE)", "DEPOTAGE").
 
+**Lot a la restitution :** le lot est une **suggestion** (celui du mouvement d'origine ou un lot choisi dans la liste), **jamais une obligation** : certains produits en stock n'ont aucun lot. Un lot vide ne bloque donc pas la finalisation ; les controles de stock et d'empietement restent appliques.
+
 **Solde par operation :** SOLDE = quantite pretee/empruntee - quantite restituee. Un client a "A RESTITUER" tant que son solde > 0.
 
 **Synthèse :** volume PRET / EMPRUNT / RESTITUTION par unite (comme PRET-RESTITUTION-EMPRUNT).
