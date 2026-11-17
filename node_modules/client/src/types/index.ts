@@ -229,7 +229,7 @@ export interface Movement {
   currency: string;
   movementDate: string;
   observation: string | null;
-  /** Ajustement négatif : nature (PERTE, VOLE, CASSE, REBUT) et motif libre. */
+  /** Ajustement négatif : nature (PERTE, VOLE, REBUT, CASSE, AUCUN) et motif libre. */
   adjustNature: string | null;
   adjustMotif: string | null;
   status: MoveStatus;

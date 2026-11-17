@@ -38,7 +38,7 @@ const MOVE_TYPE_LABELS: Record<string, string> = {
 };
 
 /** Natures proposées pour un ajustement NÉGATIF (sortie de stock). */
-const ADJUST_NATURES = ['PERTE', 'VOLE', 'CASSE', 'REBUT'] as const;
+const ADJUST_NATURES = ['PERTE', 'VOLE', 'REBUT', 'CASSE', 'AUCUN'] as const;
 
 /** Libelle affichable d'un type de mouvement ; un code inconnu reste lisible. */
 function moveTypeLabel(code: string | null | undefined): string {
@@ -720,9 +720,9 @@ function MovementFormModal({
     if (!(Number(form.quantity) > 0)) errors.push('saisissez une quantité supérieure à 0');
     if (isTransfer && !form.depotDestId) errors.push('sélectionnez un dépôt de destination');
     if (isAjustementNegatif && !form.adjustNature) {
-      errors.push("sélectionnez la nature de l'ajustement (PERTE, VOLE, CASSE ou REBUT)");
+      errors.push("sélectionnez la nature de l'ajustement (PERTE, VOLE, REBUT, CASSE ou AUCUN)");
     }
-    if (isAjustementNegatif && !form.adjustMotif.trim()) {
+    if (isAjustementNegatif && form.adjustNature !== 'AUCUN' && !form.adjustMotif.trim()) {
       errors.push("renseignez le motif de l'ajustement");
     }
     if (selectedArticle?.isLotTracked && !form.lotId) {
@@ -959,13 +959,20 @@ function MovementFormModal({
                 ))}
               </select>
             </Field>
-            <Field label="Motif">
+            <Field
+              label={form.adjustNature === 'AUCUN' ? 'Motif (facultatif)' : 'Motif'}
+              hint={
+                form.adjustNature === 'AUCUN'
+                  ? 'Facultatif lorsque la nature est AUCUN.'
+                  : undefined
+              }
+            >
               <input
                 value={form.adjustMotif}
                 onChange={(e) => update('adjustMotif', e.target.value)}
                 maxLength={255}
                 placeholder="Précisez le motif…"
-                required
+                required={form.adjustNature !== 'AUCUN'}
               />
             </Field>
           </>

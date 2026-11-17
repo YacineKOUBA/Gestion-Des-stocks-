@@ -142,7 +142,7 @@ export interface MovementPayload {
   observation?: string | null;
   /** Ajustement : sens 1 = entrée (+) / -1 = sortie (−). */
   sens?: number | null;
-  /** Ajustement négatif : nature (PERTE, VOLE, CASSE, REBUT) et motif libre. */
+  /** Ajustement négatif : nature (PERTE, VOLE, REBUT, CASSE, AUCUN) et motif libre. */
   adjustNature?: string | null;
   adjustMotif?: string | null;
   /** D20 : jeton signe renvoye apres confirmation d'un empietement de reservation. */

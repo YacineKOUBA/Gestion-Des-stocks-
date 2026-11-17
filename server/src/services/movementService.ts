@@ -29,7 +29,7 @@ export interface MoveInput {
   currency?: string | null;
   observation?: string | null;
   sens?: number | null;
-  /** Ajustement negatif : nature (PERTE, VOLE, CASSE, REBUT) et motif libre. */
+  /** Ajustement negatif : nature (PERTE, VOLE, REBUT, CASSE, AUCUN) et motif libre. */
   adjustNature?: string | null;
   adjustMotif?: string | null;
   inventoryId?: bigint | null;
