@@ -394,6 +394,33 @@ export interface ReservationOverlapConfirmation {
   stockApres?: number;
 }
 
+/**
+ * Document lié à un mouvement du journal (prêt, emprunt, restitution, validation
+ * de réservation, inventaire). Le serveur refuse d'abord l'annulation, renvoie la
+ * liste et un jeton signé ; l'administrateur confirme, puis le client rejoue.
+ */
+export interface MovementLinkInfo {
+  kind:
+    | 'PRET'
+    | 'EMPRUNT'
+    | 'RESTITUTION_PRET'
+    | 'RESTITUTION_EMPRUNT'
+    | 'RESERVATION'
+    | 'INVENTAIRE';
+  label: string;
+  ref: string;
+  detail: string;
+  consequence: string;
+}
+
+export interface LinkedMovementConfirmation {
+  kind: 'MOUVEMENT_LIE';
+  message: string;
+  links: MovementLinkInfo[];
+  /** Jeton signé, à renvoyer tel quel avec la même annulation. */
+  confirmToken: string;
+}
+
 export interface Reservation {
   id: string;
   ref: string;

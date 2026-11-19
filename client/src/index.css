@@ -287,6 +287,21 @@ a {
   color: var(--muted);
 }
 
+/* Filtre par date : libellé « Du » / « Au » collé au champ. */
+.filter-date {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.filter-date input {
+  flex: 1;
+  min-width: 0;
+}
+
 /* Inputs */
 input,
 select,
@@ -304,6 +319,15 @@ input:focus,
 select:focus {
   outline: 2px solid var(--primary-soft);
   border-color: var(--primary);
+}
+
+/* Champs figes (ex. : quantite d'un mouvement deja enregistre). */
+input:disabled,
+select:disabled,
+textarea:disabled {
+  background: var(--neutral-bg);
+  color: var(--muted);
+  cursor: not-allowed;
 }
 input[type='checkbox'] {
   width: 18px;
@@ -827,6 +851,31 @@ input[type='checkbox'] {
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+/* Avertissement « mouvement lié » : liste des documents qui seront corrigés */
+.linked-movement-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 12px 0;
+}
+.linked-movement-item {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--red);
+  border-radius: 6px;
+  background: var(--red-bg);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.linked-movement-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 /* Tabs */

@@ -13,9 +13,16 @@ import { Badge, Card, ErrorMessage, Field, Modal, PageHeader, SearchSelect, Spin
 import { DataTable, type Column } from '../components/DataTable';
 import { BonFormModal, type BonFormInitial } from '../components/BonFormModal';
 import { OverlapConfirm } from '../components/OverlapConfirm';
+import { MovementLinkConfirm } from '../components/MovementLinkConfirm';
 import { Qty } from '../components/Qty';
-import { overlapConfirmation } from '../services/api';
-import type { Movement, Lot, Partner, ReservationOverlapConfirmation } from '../types';
+import { movementLinkConfirmation, overlapConfirmation } from '../services/api';
+import type {
+  Movement,
+  Lot,
+  Partner,
+  LinkedMovementConfirmation,
+  ReservationOverlapConfirmation,
+} from '../types';
 import { formatDate, formatNumber, todayInput, toNumberOrNull } from '../utils/format';
 import { articleSearchOptions, partnerSearchOptions } from '../utils/searchOptions';
 
@@ -124,7 +131,9 @@ export function MovementsPage() {
   const [type, setType] = useState('');
   const [depotId, setDepotId] = useState('');
   const [partnerId, setPartnerId] = useState('');
-  const [partnerSearch, setPartnerSearch] = useState('');
+  // Recherche libre sur l'ARTICLE (code ou désignation). Le filtre par acteur
+  // reste le sélecteur dédié ci-dessous : les deux critères sont indépendants.
+  const [articleSearch, setArticleSearch] = useState('');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [pageSize, setPageSize] = useState(100);
@@ -148,9 +157,20 @@ export function MovementsPage() {
   // F3 : meme asymetrie pour l'annulation. Annuler une ENTREE — ou la moitie SORTIE
   // d'un TRANSFERT — retire du stock et peut donc mordre une reservation ACTIF. Le
   // serveur refuse (409) et renvoie un jeton signe ; on reutilise le dialogue D20.
+  // `linkToken` conserve l'accord déjà donné sur les documents liés : une même
+  // annulation peut demander les deux confirmations, dans cet ordre.
   const [cancelOverlap, setCancelOverlap] = useState<{
     move: Movement;
     conflict: ReservationOverlapConfirmation;
+    linkToken?: string | null;
+  } | null>(null);
+  // Annulation d'un mouvement qui appartient à un prêt/emprunt, une restitution,
+  // une validation de réservation ou un inventaire : le serveur refuse d'abord en
+  // listant les conséquences, puis rejoue avec le jeton signé.
+  const [cancelLink, setCancelLink] = useState<{
+    move: Movement;
+    confirmation: LinkedMovementConfirmation;
+    stockToken?: string | null;
   } | null>(null);
   const [cancelBusy, setCancelBusy] = useState(false);
 
@@ -176,13 +196,13 @@ export function MovementsPage() {
         excludeType: 'PERTE',
         depotId: depotId ? Number(depotId) : undefined,
         partnerId: partnerId ? Number(partnerId) : undefined,
-        partnerSearch: partnerSearch || undefined,
+        articleSearch: articleSearch || undefined,
         from: from || undefined,
         to: to || undefined,
         limit: pageSize,
         offset,
       }),
-    [type, depotId, partnerId, partnerSearch, from, to, pageSize, offset],
+    [type, depotId, partnerId, articleSearch, from, to, pageSize, offset],
   );
 
   // Un changement de filtre ou de taille de page doit revenir au début de la liste.
@@ -199,22 +219,43 @@ export function MovementsPage() {
   const canGoBack = offset > 0;
   const canGoForward = offset + pageSize < total;
 
-  async function handleCancel(move: Movement, confirmToken?: string | null) {
-    // Premier essai : confirmation classique. Rejeu apres accord d'empietement : le
-    // dialogue D20 a deja fait office de confirmation, on ne redemande rien.
-    if (confirmToken == null && !window.confirm(`Annuler le mouvement ${move.id} ?`)) return;
+  async function handleCancel(
+    move: Movement,
+    stockToken?: string | null,
+    linkToken?: string | null,
+  ) {
+    // Premier essai : confirmation classique. Les rejeux ont deja fait l'objet d'un
+    // dialogue explicite (document lie et/ou empietement), on ne redemande rien.
+    if (
+      stockToken == null &&
+      linkToken == null &&
+      !window.confirm(`Annuler le mouvement ${move.id} ?`)
+    )
+      return;
+    setCancelBusy(true);
     try {
-      await movementsApi.cancel(move.id, confirmToken ?? null);
+      await movementsApi.cancel(move.id, stockToken ?? null, linkToken ?? null);
       setCancelOverlap(null);
+      setCancelLink(null);
       setSuccess(`Mouvement ${move.id} annulé.`);
       movements.reload();
     } catch (err) {
+      // 1) Document lié : le serveur liste les conséquences et renvoie son jeton.
+      const link = movementLinkConfirmation(err);
+      if (link) {
+        setCancelOverlap(null);
+        setCancelLink({ move, confirmation: link, stockToken: stockToken ?? null });
+        return;
+      }
+      // 2) Empiètement / stock négatif : dialogue D20, en conservant l'accord déjà
+      //    donné sur le document lié pour le rejeu suivant.
       const conflict = overlapConfirmation(err);
       if (conflict) {
-        setCancelOverlap({ move, conflict });
-      } else {
-        window.alert(errorMessage(err, 'Annulation impossible'));
+        setCancelLink(null);
+        setCancelOverlap({ move, conflict, linkToken: linkToken ?? null });
+        return;
       }
+      window.alert(errorMessage(err, 'Annulation impossible'));
     } finally {
       setCancelBusy(false);
     }
@@ -355,23 +396,27 @@ export function MovementsPage() {
               value={partnerId ? Number(partnerId) : null}
               onChange={(id) => {
                 setPartnerId(id ? String(id) : '');
-                setPartnerSearch('');
                 setOffset(0);
               }}
               placeholder="Filtrer par acteur..."
             />
           </div>
           <input
-            placeholder="Rechercher par nom d'acteur"
-            value={partnerSearch}
+            placeholder="Rechercher par article (code ou désignation)"
+            value={articleSearch}
             onChange={(e) => {
-              setPartnerSearch(e.target.value);
-              setPartnerId('');
+              setArticleSearch(e.target.value);
               setOffset(0);
             }}
           />
-          <input type="date" value={from} onChange={(e) => applyFilter(setFrom)(e.target.value)} />
-          <input type="date" value={to} onChange={(e) => applyFilter(setTo)(e.target.value)} />
+          <label className="filter-date">
+            <span>Du</span>
+            <input type="date" value={from} onChange={(e) => applyFilter(setFrom)(e.target.value)} />
+          </label>
+          <label className="filter-date">
+            <span>Au</span>
+            <input type="date" value={to} onChange={(e) => applyFilter(setTo)(e.target.value)} />
+          </label>
         </div>
       </Card>
 
@@ -547,6 +592,24 @@ export function MovementsPage() {
         />
       ) : null}
 
+      {/* Mouvement lié : avertit et liste les documents qui seront corrigés. */}
+      {cancelLink ? (
+        <MovementLinkConfirm
+          confirmation={cancelLink.confirmation}
+          context={`Annulation du mouvement ${cancelLink.move.id} (${moveTypeLabel(cancelLink.move.type?.code)}).`}
+          busy={cancelBusy}
+          onCancel={() => setCancelLink(null)}
+          onConfirm={() => {
+            setCancelBusy(true);
+            void handleCancel(
+              cancelLink.move,
+              cancelLink.stockToken ?? null,
+              cancelLink.confirmation.confirmToken,
+            );
+          }}
+        />
+      ) : null}
+
       {/* F3 : meme dialogue pour l'annulation, qui retire elle aussi du stock. */}
       {cancelOverlap ? (
         <OverlapConfirm
@@ -556,7 +619,11 @@ export function MovementsPage() {
           onCancel={() => setCancelOverlap(null)}
           onConfirm={() => {
             setCancelBusy(true);
-            void handleCancel(cancelOverlap.move, cancelOverlap.conflict.confirmToken);
+            void handleCancel(
+              cancelOverlap.move,
+              cancelOverlap.conflict.confirmToken,
+              cancelOverlap.linkToken ?? null,
+            );
           }}
         />
       ) : null}
@@ -579,6 +646,10 @@ function MovementFormModal({
   // 403 tout AJUSTEMENT saisi par un profil non admin.
   const { can, user } = useAuth();
   const enEdition = movement != null;
+  // Une ligne deja enregistree n'est pas réecrite : ses champs de stock sont figes,
+  // y compris pour l'administrateur. La modification ne porte que sur les donnees
+  // administratives et ne declenche aucun recalcul de stock.
+  const stockVerrouille = enEdition;
   const articles = useAsync(() => articlesApi.list(), [], { label: 'Articles' });
   const depots = useAsync(() => referentialApi.depots(), [], { label: 'Dépôts' });
   const locations = useAsync(() => stockApi.locations(), [], { label: 'Emplacements' });
@@ -757,6 +828,22 @@ function MovementFormModal({
       adjustNature: isAjustementNegatif ? form.adjustNature : null,
       adjustMotif: isAjustementNegatif ? form.adjustMotif.trim() : null,
       observation: isAjustementNegatif ? null : form.observation || null,
+      // En modification, on renvoie les champs de stock TELS QU'ENREGISTRES, quand
+      // bien meme l'etat du formulaire aurait ete bricole : le serveur les exige
+      // identiques et n'ecrit que les champs administratifs.
+      ...(stockVerrouille && movement
+        ? {
+            type: movement.type?.code ?? form.type,
+            articleId: movement.articleId,
+            quantity: Number(movement.quantity),
+            depotId: movement.depotId,
+            locationId: movement.locationId,
+            depotDestId: movement.depotDestId,
+            locationDestId: movement.locationDestId,
+            lotId: movement.lotId,
+            sens: movement.sens,
+          }
+        : {}),
     };
     await envoyer(payload);
   }
@@ -793,8 +880,20 @@ function MovementFormModal({
     <Modal title={enEdition ? `Modifier le mouvement ${movement.id}` : 'Nouveau mouvement'} onClose={onClose}>
       <form onSubmit={handleSubmit} className="form-grid" noValidate>
         <ErrorMessage message={error} />
+        {stockVerrouille ? (
+          <div className="alert alert-warning">
+            Mouvement déjà enregistré : la quantité, le type/l'article, le lot et les
+            dépôts/emplacements sont figés. Cette modification ne recalcule pas le stock.
+            Pour corriger une erreur de quantité, annulez le mouvement puis créez-en un
+            nouveau.
+          </div>
+        ) : null}
         <Field label="Type">
-          <select value={form.type} onChange={(e) => update('type', e.target.value)}>
+          <select
+            value={form.type}
+            onChange={(e) => update('type', e.target.value)}
+            disabled={stockVerrouille}
+          >
             {typesDisponibles.map((t) => (
               <option key={t} value={t}>
                 {moveTypeLabel(t)}
@@ -807,7 +906,11 @@ function MovementFormModal({
             label="Sens de l'ajustement"
             hint="Positif : entrée en stock (+). Négatif : sortie de stock (−)."
           >
-            <select value={form.sens} onChange={(e) => update('sens', e.target.value)}>
+            <select
+              value={form.sens}
+              onChange={(e) => update('sens', e.target.value)}
+              disabled={stockVerrouille}
+            >
               <option value="1">Positif (+)</option>
               <option value="-1">Négatif (−)</option>
             </select>
@@ -819,15 +922,25 @@ function MovementFormModal({
             value={form.articleId ? Number(form.articleId) : null}
             onChange={(id) => handleArticleChange(id ? String(id) : '')}
             placeholder="Rechercher un article…"
+            disabled={stockVerrouille}
           />
         </Field>
-        <Field label="Quantité">
+        <Field
+          label="Quantité"
+          hint={
+            stockVerrouille
+              ? "Non modifiable après enregistrement. Annulez le mouvement et créez-en un nouveau pour corriger une erreur de quantité."
+              : undefined
+          }
+        >
           <input
             type="number"
             step="0.001"
             min="0.001"
             value={form.quantity}
             onChange={(e) => update('quantity', e.target.value)}
+            disabled={stockVerrouille}
+            title={stockVerrouille ? 'Quantité figée après enregistrement' : undefined}
             required
           />
         </Field>
@@ -847,7 +960,12 @@ function MovementFormModal({
           />
         </Field>
         <Field label="Dépôt">
-          <select value={form.depotId} onChange={(e) => update('depotId', e.target.value)} required>
+          <select
+            value={form.depotId}
+            onChange={(e) => update('depotId', e.target.value)}
+            disabled={stockVerrouille}
+            required
+          >
             <option value="">—</option>
             {depots.data?.map((d) => (
               <option key={d.id} value={d.id}>
@@ -857,7 +975,11 @@ function MovementFormModal({
           </select>
         </Field>
         <Field label="Emplacement">
-          <select value={form.locationId} onChange={(e) => update('locationId', e.target.value)}>
+          <select
+            value={form.locationId}
+            onChange={(e) => update('locationId', e.target.value)}
+            disabled={stockVerrouille}
+          >
             <option value="">—</option>
             {locations.data?.map((l) => (
               <option key={l.id} value={l.id}>
@@ -869,7 +991,12 @@ function MovementFormModal({
         {isTransfer ? (
           <>
             <Field label="Dépôt destination">
-              <select value={form.depotDestId} onChange={(e) => update('depotDestId', e.target.value)} required>
+              <select
+                value={form.depotDestId}
+                onChange={(e) => update('depotDestId', e.target.value)}
+                disabled={stockVerrouille}
+                required
+              >
                 <option value="">—</option>
                 {depots.data?.map((d) => (
                   <option key={d.id} value={d.id}>
@@ -879,7 +1006,11 @@ function MovementFormModal({
               </select>
             </Field>
             <Field label="Emplacement destination">
-              <select value={form.locationDestId} onChange={(e) => update('locationDestId', e.target.value)}>
+              <select
+                value={form.locationDestId}
+                onChange={(e) => update('locationDestId', e.target.value)}
+                disabled={stockVerrouille}
+              >
                 <option value="">—</option>
                 {locations.data?.map((l) => (
                   <option key={l.id} value={l.id}>
@@ -900,7 +1031,11 @@ function MovementFormModal({
                 : undefined
           }
         >
-            <select value={form.lotId} onChange={(e) => handleLotChange(e.target.value)}>
+            <select
+              value={form.lotId}
+              onChange={(e) => handleLotChange(e.target.value)}
+              disabled={stockVerrouille}
+            >
               <option value="">-</option>
               {orderedLots.map((l) => (
                 <option key={l.id} value={l.id}>

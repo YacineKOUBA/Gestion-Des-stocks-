@@ -37,6 +37,42 @@ export function issueConfirmToken(payload: ConfirmPayload, now = Date.now()): st
 }
 
 /**
+ * Verifie l'authenticite et la fraicheur d'un jeton, puis renvoie sa charge utile.
+ *
+ * Contrairement a `verifyConfirmToken`, aucune liste de champs n'est exigee : les
+ * jetons COMPOSITES (une confirmation de document lie qui embarque aussi l'accord
+ * sur le stock) portent des champs supplementaires. L'appelant verifie alors les
+ * seuls champs qui le concernent. Renvoie null plutot que de lever : un jeton
+ * invalide est un refus d'ecriture, pas une erreur serveur.
+ */
+export function decodeConfirmToken(
+  token: string | null | undefined,
+  now = Date.now(),
+): Record<string, unknown> | null {
+  if (!token) return null;
+  const dot = token.lastIndexOf('.');
+  if (dot <= 0) return null;
+  const encoded = token.slice(0, dot);
+  const signature = token.slice(dot + 1);
+
+  const attendu = sign(encoded);
+  const a = Buffer.from(attendu);
+  const b = Buffer.from(signature);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
+
+  let body: Record<string, unknown>;
+  try {
+    body = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'));
+  } catch {
+    return null;
+  }
+
+  const iat = Number(body.iat);
+  if (!Number.isFinite(iat) || now - iat > TTL_MS || iat - now > 60_000) return null;
+  return body;
+}
+
+/**
  * Verifie qu'un jeton est authentique, non expire, et qu'il a bien ete emis
  * pour exactement `expected`. Renvoie false plutot que de lever : un jeton
  * invalide est un refus d'ecriture, pas une erreur serveur.
@@ -46,26 +82,8 @@ export function verifyConfirmToken(
   expected: ConfirmPayload,
   now = Date.now(),
 ): boolean {
-  if (!token) return false;
-  const dot = token.lastIndexOf('.');
-  if (dot <= 0) return false;
-  const encoded = token.slice(0, dot);
-  const signature = token.slice(dot + 1);
-
-  const attendu = sign(encoded);
-  const a = Buffer.from(attendu);
-  const b = Buffer.from(signature);
-  if (a.length !== b.length || !timingSafeEqual(a, b)) return false;
-
-  let body: Record<string, unknown>;
-  try {
-    body = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'));
-  } catch {
-    return false;
-  }
-
-  const iat = Number(body.iat);
-  if (!Number.isFinite(iat) || now - iat > TTL_MS || iat - now > 60_000) return false;
+  const body = decodeConfirmToken(token, now);
+  if (!body) return false;
 
   // Le jeton doit avoir ete emis pour cette operation, pas pour une autre.
   for (const [k, v] of Object.entries(expected)) {

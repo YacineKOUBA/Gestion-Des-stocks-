@@ -62,6 +62,21 @@ export const cancelSchema = z.object({
 });
 
 /**
+ * Annulation d'un mouvement. Deux confirmations distinctes peuvent etre exigees :
+ *   - `linkConfirmToken` : le mouvement est lie a un pret/emprunt, une restitution,
+ *     une validation de reservation ou un inventaire, et l'annulation va corriger
+ *     ce document (ou le supprimer) ;
+ *   - `confirmToken` : l'annulation retire du stock et peut generer un stock negatif
+ *     ou empieter sur une reservation ACTIF (meme controle que la creation).
+ * Les deux jetons sont signes et lies a l'operation ; le client peut donc en avoir
+ * un, l'autre, ou les deux au moment du rejeu.
+ */
+export const cancelMovementSchema = z.object({
+  confirmToken: z.string().max(4000).nullish(),
+  linkConfirmToken: z.string().max(4000).nullish(),
+});
+
+/**
  * D20, decision 7 : la reactivation d'un mouvement qui retire du stock repasse par le
  * meme controle d'empietement que la creation, donc par le meme jeton signe. Absent
  * ou invalide => la reactivation est refusee (409) avec le detail du conflit.
@@ -71,11 +86,12 @@ export const reactivateSchema = z.object({
 });
 
 /**
- * Modification d'une ligne de mouvement existante (administrateur uniquement).
+ * Modification d'une ligne de mouvement DEJA ENREGISTREE (administrateur uniquement).
  *
- * Meme forme que la creation : toutes les colonnes saisissables sont reprises, et
- * changer le type recalcule le sens. `confirmToken` couvre le meme besoin qu'a la
- * creation — une correction qui retire du stock peut mordre une reservation ACTIF
- * (D20) et le serveur renvoie alors le meme jeton signe.
+ * Meme forme que la creation pour que le client renvoie la ligne complete, mais le
+ * service verifie que les champs qui determinent le stock (type, sens, article,
+ * quantite, lot, depot, emplacements) sont STRICTEMENT inchanges. Ils sont figes :
+ * une correction ne doit pas etre traitee comme une nouvelle ecriture de stock.
+ * `confirmToken` n'a donc plus d'effet sur la modification.
  */
 export const movementUpdateSchema = movementSchema;

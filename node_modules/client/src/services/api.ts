@@ -1,4 +1,4 @@
-import type { Paged, ReservationOverlapConfirmation } from '../types';
+import type { LinkedMovementConfirmation, Paged, ReservationOverlapConfirmation } from '../types';
 
 const TOKEN_KEY = 'gdtrading_token';
 
@@ -50,6 +50,31 @@ export function overlapConfirmation(
     return null;
   }
   return details?.confirmation?.confirmToken ? details.confirmation : null;
+}
+
+/**
+ * Annulation d'un mouvement lié à un document (prêt, emprunt, restitution,
+ * validation de réservation, inventaire). Le serveur répond 409
+ * MOUVEMENT_LIE_A_CONFIRMATION avec la liste des liens et un jeton signé ; le
+ * client affiche l'avertissement, puis rejoue l'annulation avec ce jeton.
+ *
+ * Ce canal est distinct de `overlapConfirmation` : une même annulation peut
+ * demander les deux confirmations (document lié ET stock négatif), et chacune a
+ * son propre jeton.
+ */
+export function movementLinkConfirmation(error: unknown): LinkedMovementConfirmation | null {
+  if (!(error instanceof ApiError) || error.status !== 409) return null;
+  const details = error.details as
+    | { code?: string; confirmation?: LinkedMovementConfirmation }
+    | undefined;
+  if (
+    error.code !== 'MOUVEMENT_LIE_A_CONFIRMATION' &&
+    details?.code !== 'MOUVEMENT_LIE_A_CONFIRMATION'
+  ) {
+    return null;
+  }
+  const confirmation = details?.confirmation;
+  return confirmation?.confirmToken && confirmation.links?.length ? confirmation : null;
 }
 
 type QueryValue = string | number | boolean | null | undefined;

@@ -172,11 +172,13 @@ export function SearchSelect({
   value,
   onChange,
   placeholder = 'Rechercher…',
+  disabled = false,
 }: {
   options: SearchSelectOption[];
   value: number | null;
   onChange: (id: number | null) => void;
   placeholder?: string;
+  disabled?: boolean;
 }) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
@@ -206,16 +208,19 @@ export function SearchSelect({
         <input
           value={query}
           placeholder={selected?.label ?? placeholder}
+          disabled={disabled}
           onChange={(e) => {
             setQuery(e.target.value);
             setOpen(true);
             setHighlight(0);
           }}
           onFocus={() => {
+            if (disabled) return;
             setOpen(true);
             if (selected && !query) setQuery(selected.label);
           }}
           onKeyDown={(e) => {
+            if (disabled) return;
             if (e.key === 'ArrowDown') {
               e.preventDefault();
               setOpen(true);
@@ -232,13 +237,13 @@ export function SearchSelect({
             }
           }}
         />
-        {selected ? (
+        {selected && !disabled ? (
           <button type="button" className="search-select-clear" onClick={clear} aria-label="Effacer">
             ×
           </button>
         ) : null}
       </div>
-      {open ? (
+      {open && !disabled ? (
         <div className="search-select-dropdown">
           {filtered.length === 0 ? (
             <div className="search-select-empty">Aucun résultat</div>

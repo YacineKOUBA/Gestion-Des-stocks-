@@ -5,7 +5,12 @@ import { can } from '../auth/permissions';
 import { createMovement, cancelMovement, reactivateMovement, deleteMovement, updateMovement } from '../services/movementService';
 import { forbidden } from '../utils/apiError';
 import { parse, toBigInt } from '../utils/parse';
-import { movementSchema, movementUpdateSchema, reactivateSchema } from '../validators/movement';
+import {
+  cancelMovementSchema,
+  movementSchema,
+  movementUpdateSchema,
+  reactivateSchema,
+} from '../validators/movement';
 import { requirePermission } from '../middlewares/permissions';
 
 const router = Router();
@@ -22,6 +27,17 @@ router.get('/', requirePermission('movement:read'), async (req, res) => {
   if (q.partnerId) where.partnerId = Number(q.partnerId);
   if (q.partnerSearch) {
     where.partner = { name: { contains: String(q.partnerSearch), mode: 'insensitive' } };
+  }
+  // Recherche libre sur l'article : code OU designation, insensible a la casse.
+  // Le filtre par acteur (`partnerId`) reste independant et peut se combiner.
+  if (q.articleSearch) {
+    const articleSearch = String(q.articleSearch);
+    where.article = {
+      OR: [
+        { code: { contains: articleSearch, mode: 'insensitive' } },
+        { designation: { contains: articleSearch, mode: 'insensitive' } },
+      ],
+    };
   }
   if (q.type) where.type = { code: q.type };
   // Exclusion d'un type (utilisee par la page Mouvement pour retirer definitivement
@@ -109,8 +125,21 @@ router.patch('/:id/cancel', requirePermission('movement:revise'), async (req, re
   // l'operation est donc soumise au meme controle d'empietement que la creation et
   // que la reactivation. Le client renvoie le jeton signe si l'utilisateur a accepte
   // l'amputation des reservations.
-  const data = parse(reactivateSchema, req.body ?? {});
-  res.json(await cancelMovement(id, req.user!.id, data.confirmToken ?? null));
+  //
+  // Un mouvement peut en outre etre lie a un pret/emprunt, une restitution, une
+  // validation de reservation ou un inventaire : le serveur refuse alors en listant
+  // les consequences, et le client rejoue avec `linkConfirmToken` une fois que
+  // l'administrateur a confirme. Les deux jetons sont independants et peuvent
+  // accompagner le meme rejeu.
+  const data = parse(cancelMovementSchema, req.body ?? {});
+  res.json(
+    await cancelMovement(
+      id,
+      req.user!.id,
+      data.confirmToken ?? null,
+      data.linkConfirmToken ?? null,
+    ),
+  );
 });
 
 router.patch('/:id/reactivate', requirePermission('movement:revise'), async (req, res) => {

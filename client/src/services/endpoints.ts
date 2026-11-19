@@ -150,20 +150,29 @@ export interface MovementPayload {
 }
 
 export const movementsApi = {
-  list: (filters: { articleId?: number; depotId?: number; lotId?: number; partnerId?: number; partnerSearch?: string; type?: string; excludeType?: string; from?: string; to?: string; limit?: number; offset?: number } = {}): Promise<Paged<Movement>> =>
+  list: (filters: { articleId?: number; articleSearch?: string; depotId?: number; lotId?: number; partnerId?: number; partnerSearch?: string; type?: string; excludeType?: string; from?: string; to?: string; limit?: number; offset?: number } = {}): Promise<Paged<Movement>> =>
     requestPaged<Movement>('/movements', { query: { ...filters } }),
   create: (payload: MovementPayload) => request<Movement | { sortie: Movement; entree: Movement }>('/movements', { method: 'POST', body: payload }),
-  // D30 : modification d'une ligne existante (administrateur, `movement:edit`). Meme
-  // corps que la creation ; le serveur applique les memes controles, empietement
-  // compris, et renvoie un jeton signe s'il faut confirmer l'amputation d'une
-  // reservation.
+  // Modification d'une ligne existante (administrateur, `movement:edit`). Seules les
+  // donnees administratives (date, acteur, n° de document, prix, observation, nature/
+  // motif d'ajustement) sont ecrites : aucun recalcul de stock, aucun jeton de stock.
+  // Les champs de stock doivent etre renvoyes a l'identique sous peine de refus 400.
   update: (id: string, payload: MovementPayload) =>
     request<Movement>(`/movements/${id}`, { method: 'PUT', body: payload }),
   // F3 : l'annulation retire du stock (annuler une ENTREE, ou la moitie SORTIE d'un
   // TRANSFERT), elle est donc soumise au meme controle d'empietement D20 que la
   // creation et la reactivation : le jeton signe fait partie de l'appel.
-  cancel: (id: string, confirmToken?: string | null) =>
-    request<Movement>(`/movements/${id}/cancel`, { method: 'PATCH', body: { confirmToken: confirmToken ?? null } }),
+  // Deux jetons indépendants : `linkConfirmToken` confirme la correction des
+  // documents liés (prêt, restitution, réservation, inventaire), `confirmToken`
+  // confirme l'empiètement/stock négatif. Un même rejeu peut porter les deux.
+  cancel: (id: string, confirmToken?: string | null, linkConfirmToken?: string | null) =>
+    request<Movement>(`/movements/${id}/cancel`, {
+      method: 'PATCH',
+      body: {
+        confirmToken: confirmToken ?? null,
+        linkConfirmToken: linkConfirmToken ?? null,
+      },
+    }),
   // D20 : reactiver un mouvement qui retire du stock peut mordre dans une reservation.
   // Le serveur refuse (409) et renvoie un jeton signe ; on le rejoue avec l'identite
   // du mouvement si l'utilisateur a accepte l'amputation.

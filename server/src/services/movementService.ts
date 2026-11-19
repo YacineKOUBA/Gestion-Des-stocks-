@@ -1,6 +1,6 @@
 import { prisma } from '../prisma';
 import { MoveTypeCode, Prisma } from '@prisma/client';
-import { badRequest, conflict, notFound } from '../utils/apiError';
+import { ApiError, badRequest, conflict, notFound } from '../utils/apiError';
 import { audit } from '../utils/audit';
 import { dec, toNumber } from '../utils/decimal';
 import { verifyConfirmToken } from '../utils/confirmToken';
@@ -12,6 +12,15 @@ import {
   type Amputation,
 } from './reservationOverlap';
 import { assertNoNegativeStock } from './nonNegativeStock';
+import {
+  applyLinkedCancellation,
+  blockingLinkMessage,
+  describeMovementLinks,
+  linkedMovementConfirmation,
+  verifyCancelLinkToken,
+  wasLinkedCancellation,
+  type LinkedMove,
+} from './movementLinks';
 
 export interface MoveInput {
   type: MoveTypeCode;
@@ -303,9 +312,9 @@ async function assertNoReservedOverlap(
 }
 
 /**
- * Sens (signe) qu'un type de mouvement applique au stock. Isole pour que la creation
- * et la modification d'une ligne partagent EXACTEMENT la meme regle : une correction
- * de type doit recalculer le sens, jamais le conserver.
+ * Sens (signe) qu'un type de mouvement applique au stock. La creation s'en sert pour
+ * determiner l'ecriture ; la modification s'en sert uniquement pour verifier que le
+ * sens recu est toujours celui de la ligne enregistree : il ne doit jamais changer.
  */
 function sensDuType(type: MoveTypeCode, sensFourni?: number | null): number {
   switch (type) {
@@ -495,13 +504,78 @@ export async function cancelMovement(
   moveId: bigint,
   userId: number,
   confirmToken?: string | null,
+  linkConfirmToken?: string | null,
 ) {
   const move = await prisma.move.findUnique({
     where: { id: moveId },
-    include: { type: true },
+    include: {
+      type: true,
+      loan: {
+        select: {
+          id: true,
+          type: true,
+          quantity: true,
+          partner: { select: { name: true } },
+          article: { select: { code: true, designation: true } },
+          _count: { select: { restitutions: true } },
+        },
+      },
+      restitutions: {
+        select: {
+          id: true,
+          loanId: true,
+          type: true,
+          quantity: true,
+          loan: {
+            select: {
+              id: true,
+              type: true,
+              quantity: true,
+              partner: { select: { name: true } },
+              article: { select: { code: true, designation: true } },
+            },
+          },
+        },
+      },
+      reservation: {
+        select: {
+          id: true,
+          ref: true,
+          status: true,
+          partner: { select: { name: true } },
+        },
+      },
+      inventoryLine: {
+        select: {
+          id: true,
+          inventoryId: true,
+          inventory: { select: { id: true, code: true, status: true } },
+        },
+      },
+    },
   });
   if (!move) throw notFound('Mouvement introuvable');
   if (move.status === 'ANNULE') throw badRequest('Mouvement déjà annulé');
+
+  // Un mouvement peut être la trace d'un AUTRE document (prêt, emprunt,
+  // restitution, validation de réservation, clôture d'inventaire). Annuler la
+  // ligne sans corriger ce document le laisserait faux : on refuse d'abord en
+  // listant les liens et les conséquences, puis l'administrateur confirme.
+  //
+  // Un prêt/emprunt qui possède déjà des restitutions est un cas de BLOCAGE : les
+  // supprimer en cascade effacerait des retours enregistrés. L'administrateur doit
+  // d'abord annuler les restitutions, ce qui ramène le prêt à son état antérieur.
+  const blocking = blockingLinkMessage(move);
+  if (blocking) throw conflict(blocking, { code: 'MOUVEMENT_LIE_RESTITUTIONS' });
+
+  const links = await describeMovementLinks(move);
+  if (links.length > 0 && !verifyCancelLinkToken(linkConfirmToken, moveId, userId)) {
+    const confirmation = linkedMovementConfirmation(moveId, userId, links);
+    throw conflict(confirmation.message, {
+      code: 'MOUVEMENT_LIE_A_CONFIRMATION',
+      confirmation,
+    });
+  }
 
   const paire =
     move.type.code === MoveTypeCode.TRANSFERT
@@ -518,7 +592,7 @@ export async function cancelMovement(
 
   let amputations: Amputation[] = [];
 
-  const updated = await prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "articles" WHERE id = ${move.articleId} FOR UPDATE`;
 
     if (retirant) {
@@ -598,6 +672,11 @@ export async function cancelMovement(
       );
     }
 
+    // Correction des documents liés AVANT de basculer la ligne : la transaction
+    // englobe les deux, donc un échec laisse le mouvement ACTIF et le document
+    // intact. Le stock suivra tout seul (seuls les mouvements ACTIFS comptent).
+    const linkedDocuments = links.length > 0 ? await applyLinkedCancellation(tx, move as LinkedMove) : {};
+
     const updatedMove = await tx.move.update({
       where: { id: moveId },
       data: { status: 'ANNULE', canceledBy: userId, canceledAt: new Date() },
@@ -611,7 +690,7 @@ export async function cancelMovement(
     // m3 : la reponse renvoyait l'instantane relu AVANT la mise a jour, donc
     // l'ecran reaffichait « ACTIF » juste apres avoir annule. On renvoie la ligne
     // ecrite, avec son statut et sa date d'annulation.
-    return updatedMove;
+    return { updatedMove, linkedDocuments };
   });
   await audit(userId, 'ANNULATION', 'movement', String(moveId), {
     moveId,
@@ -619,8 +698,9 @@ export async function cancelMovement(
     articleId: move.articleId,
     quantity: move.quantity,
     ...(amputations.length ? { amputations } : {}),
+    ...(links.length > 0 ? { linkedDocuments: result.linkedDocuments } : {}),
   });
-  return updated;
+  return result.updatedMove;
 }
 
 /**
@@ -656,6 +736,29 @@ export async function reactivateMovement(
   });
   if (!move) throw notFound('Mouvement introuvable');
   if (move.status !== 'ANNULE') throw badRequest('Mouvement déjà actif');
+
+  // Un mouvement annulé qui portait un document lié ne peut pas être réactivé
+  // seul : la correction a supprimé le prêt/la restitution, ou rouvert la
+  // réservation/l'inventaire. Le remettre ACTIF créerait une ligne de stock sans
+  // document, ou une seconde sortie pour une réservation déjà rouverte.
+  if (move.reservationId != null) {
+    throw conflict(
+      'Ce mouvement est la sortie générée par la validation d’une réservation. ' +
+        'Il ne peut pas être réactivé seul : la réservation a été rouverte, revalidez-la ou corrigez-la.',
+    );
+  }
+  if (move.inventoryId != null) {
+    throw conflict(
+      'Ce mouvement a été généré par la clôture d’un inventaire. ' +
+        'Il ne peut pas être réactivé seul : la ligne d’inventaire a été rouverte, corrigez-la ou revalidez-la.',
+    );
+  }
+  if (await wasLinkedCancellation(moveId)) {
+    throw conflict(
+      'Ce mouvement appartenait à un prêt, un emprunt ou une restitution supprimé lors de son annulation. ' +
+        'Il ne peut pas être réactivé seul : ressaisissez l’opération depuis la page Prêts & Emprunts.',
+    );
+  }
 
   const paire =
     move.type.code === MoveTypeCode.TRANSFERT
@@ -829,32 +932,24 @@ export async function deleteMovement(moveId: bigint, userId: number) {
 }
 
 /**
- * MODIFIE une ligne de mouvement existante (administrateur uniquement, `movement:edit`).
+ * MODIFIE un mouvement DEJA ENREGISTRE (administrateur uniquement, `movement:edit`).
  *
- * Toutes les colonnes saisissables sont modifiables. Le stock etant recalcule a partir
- * des mouvements ACTIFS, la correction du type, de la quantite, du lot, du depot ou de
- * l'article deplace de la marchandise : l'operation repasse donc par EXACTEMENT les
- * memes controles que la creation — disponibilite de la cellule, coherence d'un RETOUR,
- * depot destination d'un TRANSFERT, et surtout le point de controle unique D20
- * (`assertNoReservedOverlap`), car une correction qui retire du stock peut mordre une
- * reservation ACTIF. Une correction qui en fait RENTRER (ex. : augmenter une ENTREE)
- * ne peut pas mordre : `assertNoReservedOverlap` la laisse passer, et c'est voulu.
+ * Regle fondamentale : une correction n'est PAS une nouvelle ecriture de stock.
+ * Le stock etant calcule a partir des mouvements ACTIFS, toucher a la quantite, au
+ * type/sens, a l'article, au lot ou au depot ferait varier le stock sans passer par les
+ * controles de la saisie (disponibilite, stock negatif, empietement D20). Ces champs
+ * sont donc FIGES : le serveur refute toute tentative de les changer, y compris par
+ * appel direct a l'API, et la modification ne porte que sur les donnees
+ * administratives (date, acteur, numero de document, prix, observation, nature/motif
+ * d'un ajustement negatif). Aucun recalcul de stock, aucune amputation de reservation,
+ * aucun controle de creation n'est execute ici.
  *
- * Regle de perimetre — TROIS situations sont refusees, parce que la ligne n'appartient
- * pas a l'utilisateur mais a un AUTRE document qui s'y adosse :
- *   - un mouvement de PRET (`loanId`) : le pret porte les quantites rendues ; corriger
- *     la ligne desynchroniserait son solde ;
- *   - un mouvement de CLOTURE D'INVENTAIRE (`inventoryId`) : la ligne d'inventaire
- *     porte l'ecart valide et sa justification ; corriger le mouvement rendrait
- *     l'ecart affiche faux ;
- *   - un mouvement issu d'une RESERVATION (`reservationId`) : meme raison.
- * Dans ces trois cas, l'utilisateur doit annuler puis ressaisir l'operation PORTEUSE
- * (le pret, l'inventaire, la reservation), ce qui reste trace et coherent.
+ * Si la QUANTITE (ou un autre champ de stock) est erronee, il faut annuler le mouvement
+ * puis en saisir un nouveau : c'est le seul moyen de faire bouger le stock, et cela
+ * reste trace et soumis aux controles normaux.
  *
- * Un TRANSFERT est egalement refuse : c'est un COUPLE de deux lignes liees par
- * `linkMoveId` (une SORTIE source, une ENTREE destination). Modifier une seule moitie
- * desynchroniserait le couple — le stock du depot destination ne suivrait plus. Pour un
- * transfert, on annule (les deux moities basculent) puis on ressaisit.
+ * Les mouvements appartenant a un autre document (pret, restitution, inventaire,
+ * reservation, transfert) restent proteges : on ne corrige que la piece porteuse.
  */
 export async function updateMovement(
   moveId: bigint,
@@ -882,17 +977,14 @@ export async function updateMovement(
       'Un TRANSFERT est deux lignes liées : il ne peut pas être modifié ligne à ligne. Annulez le transfert, puis ressaisissez-le.',
     );
   }
-  // Un mouvement de pret (`loans.movementId`) ET un mouvement de restitution
-  // (`loan_restitutions.movementId`) appartiennent au meme pret : corriger l'un ou
-  // l'autre desynchroniserait le solde rendu, qui est calcule sur ces lignes.
   if (move.loan || move.restitutions.length > 0) {
     throw conflict(
-      'Ce mouvement appartient à un prêt ou à une restitution de prêt : modifiez le prêt lui-même, sinon son solde deviendrait faux.',
+      'Ce mouvement appartient à un prêt ou à une restitution de prêt : modifiez le prêt lui-même.',
     );
   }
   if (move.inventoryId != null || move.inventoryLine) {
     throw conflict(
-      'Ce mouvement a été généré par la clôture d’un inventaire : il porte l’écart validé. Annulez l’inventaire ou corrigez-le par un AJUSTEMENT.',
+      'Ce mouvement a été généré par la clôture d’un inventaire : il porte l’écart validé. Corrigez l’inventaire ou annulez le mouvement.',
     );
   }
   if (move.reservationId != null) {
@@ -901,103 +993,58 @@ export async function updateMovement(
     );
   }
 
-  // Le sens est recalcule a partir du type DEMANDE : changer le type d'une ligne doit
-  // changer son effet sur le stock, sinon un « ENTREE » corrige en « SORTIE » garderait
-  // un signe +1 et ferait monter le stock au lieu de le faire baisser.
-  const sens = sensDuType(input.type, input.sens);
-  const ajustementNegatif = input.type === MoveTypeCode.AJUSTEMENT && sens < 0;
+  // Champs qui determinent la contribution du mouvement au stock : ils doivent rester
+  // STRICTEMENT identiques a ceux de la ligne enregistree. Le controle cote serveur est
+  // indispensable : desactiver un champ dans le formulaire ne protege pas l'API.
+  const champsStock: Array<[string, boolean]> = [
+    ['type', move.type.code === input.type],
+    ['article', move.articleId === input.articleId],
+    ['quantité', dec(move.quantity).equals(dec(input.quantity))],
+    ['sens', move.sens === sensDuType(input.type, input.sens)],
+    ['dépôt', move.depotId === input.depotId],
+    ['emplacement', (move.locationId ?? null) === (input.locationId ?? null)],
+    ['lot', (move.lotId ?? null) === (input.lotId ?? null)],
+    ['dépôt destination', (move.depotDestId ?? null) === (input.depotDestId ?? null)],
+    ['emplacement destination', (move.locationDestId ?? null) === (input.locationDestId ?? null)],
+  ];
+  const champsModifies = champsStock.filter(([, ok]) => !ok).map(([libelle]) => libelle);
+  if (champsModifies.length > 0) {
+    throw new ApiError(
+      400,
+      'MOUVEMENT_CHAMP_IMMUTABLE',
+      `Ces champs ne sont pas modifiables sur un mouvement enregistré : ${champsModifies.join(', ')}. ` +
+        'Annulez le mouvement et créez-en un nouveau.',
+      { champs: champsModifies },
+    );
+  }
 
-  let amputations: Amputation[] = [];
+  // Type et sens etant figes, on prefere la valeur ENREGISTREE a celle recue pour
+  // deciding de la nature/motif : aucune derivation ne peut faire bouger le stock.
+  const ajustementNegatif = move.type.code === MoveTypeCode.AJUSTEMENT && move.sens < 0;
+  const observation = ajustementNegatif ? null : (input.observation ?? null);
+  const adjustNature = ajustementNegatif ? (input.adjustNature ?? null) : null;
+  const adjustMotif = ajustementNegatif ? (input.adjustMotif ?? null) : null;
+  const currency = input.currency ?? move.currency;
 
-  const updated = await prisma.$transaction(async (tx) => {
-    const article = await assertLotRequired(input, tx);
-    // Verrou sur l'article SOURCE actuel ET sur le nouveau : le stock des deux cellules
-    // bouge, et deux corrections concurrentes du meme article ne doivent pas se croiser.
-    await lockArticle(tx, move.articleId);
-    if (input.articleId !== move.articleId) await lockArticle(tx, input.articleId);
-
-    const currency = input.currency ?? article.currency ?? 'DZD';
-
-    // Re-validation sur la cellule DESTINATION de l'ecriture, en EXCLUANT la ligne que
-    // l'on corrige : elle est encore ACTIF et compterait sa propre ancienne quantite.
-    // La mesure donne donc le stock reellement disponible une fois la correction faite,
-    // comme si la ligne avait deja sa nouvelle valeur.
-    let stockCellule: Prisma.Decimal | null = null;
-    if (
-      input.type === MoveTypeCode.SORTIE ||
-      input.type === MoveTypeCode.PERTE ||
-      (input.type === MoveTypeCode.AJUSTEMENT && sens < 0)
-    ) {
-      stockCellule = await availableStockDeci(
-        {
-          articleId: input.articleId,
-          lotId: input.lotId,
-          depotId: input.depotId,
-          locationId: input.locationId,
-          excludeIds: [moveId],
-        },
-        tx,
-      );
-      if (stockCellule.lessThan(dec(input.quantity))) {
-        throw badRequest(
-          `Stock insuffisant pour cet article (disponible : ${toNumber(stockCellule)})`,
-        );
-      }
-    }
-
-    // Prévention stock négatif sur modification
-    if (sens < 0) {
-      await assertNoNegativeStock(
-        {
-          articleId: input.articleId,
-          lotId: input.lotId,
-          depotId: input.depotId,
-          locationId: input.locationId,
-          quantity: input.quantity,
-          type: input.type,
-          confirmToken: (input as any).confirmToken ?? null,
-        },
-        sens,
-        userId,
-        tx,
-      );
-    }
-    if (input.type === MoveTypeCode.RETOUR) {
-      await assertRetourCoherent(input, tx, moveId);
-    }
-
-    // D20 : meme porte que la creation. Le stock `stockCellule` a ete calcule en
-    // excluant la ligne corrigee : c'est le Y de la formule.
-    amputations = await assertNoReservedOverlap(input, sens, stockCellule, userId, tx);
-
-    const typeId = (await tx.moveType.findUniqueOrThrow({ where: { code: input.type } })).id;
-
-    return tx.move.update({
-      where: { id: moveId },
-      data: {
-        typeId,
-        articleId: input.articleId,
-        quantity: input.quantity,
-        sens,
-        movementDate: input.movementDate,
-        depotId: input.depotId,
-        locationId: input.locationId,
-        depotDestId: null,
-        locationDestId: null,
-        lotId: input.lotId,
-        partnerId: input.partnerId,
-        docNumber: input.docNumber,
-        unitPrice: input.unitPrice,
-        currency,
-        observation: input.observation,
-        adjustNature: ajustementNegatif ? (input.adjustNature ?? null) : null,
-        adjustMotif: ajustementNegatif ? (input.adjustMotif ?? null) : null,
-      },
-    });
+  // Une seule ecriture, aucun $transaction de stock, aucun verrou d'article, aucun
+  // controle d'empietement : la ligne de mouvement reste exactement la meme ecriture.
+  const updated = await prisma.move.update({
+    where: { id: moveId },
+    data: {
+      movementDate: input.movementDate,
+      partnerId: input.partnerId ?? null,
+      docNumber: input.docNumber ?? null,
+      unitPrice: input.unitPrice ?? null,
+      currency,
+      observation,
+      adjustNature,
+      adjustMotif,
+    },
   });
 
   await audit(userId, 'MODIFICATION', 'movement', String(moveId), {
     moveId,
+    motif: 'MODIFICATION_ADMINISTRATIVE_SANS_RECALCUL_STOCK',
     avant: {
       type: move.type.code,
       articleId: move.articleId,
@@ -1006,31 +1053,38 @@ export async function updateMovement(
       depotId: move.depotId,
       lotId: move.lotId,
       locationId: move.locationId,
+      depotDestId: move.depotDestId,
+      locationDestId: move.locationDestId,
       partnerId: move.partnerId,
       movementDate: move.movementDate,
       docNumber: move.docNumber,
       unitPrice: move.unitPrice != null ? toNumber(move.unitPrice, 4) : null,
+      currency: move.currency,
       observation: move.observation,
       adjustNature: move.adjustNature,
       adjustMotif: move.adjustMotif,
     },
     apres: {
-      type: input.type,
-      articleId: input.articleId,
-      quantity: input.quantity,
-      sens,
-      depotId: input.depotId,
-      lotId: input.lotId ?? null,
-      locationId: input.locationId ?? null,
+      // Les champs de stock sont repris tels quels : la trace ne doit pas laisser
+      // croire qu'ils ont ete ecrits.
+      type: move.type.code,
+      articleId: move.articleId,
+      quantity: toNumber(move.quantity, 3),
+      sens: move.sens,
+      depotId: move.depotId,
+      lotId: move.lotId,
+      locationId: move.locationId,
+      depotDestId: move.depotDestId,
+      locationDestId: move.locationDestId,
       partnerId: input.partnerId ?? null,
       movementDate: input.movementDate,
       docNumber: input.docNumber ?? null,
       unitPrice: input.unitPrice ?? null,
-      observation: input.observation ?? null,
-      adjustNature: ajustementNegatif ? (input.adjustNature ?? null) : null,
-      adjustMotif: ajustementNegatif ? (input.adjustMotif ?? null) : null,
+      currency,
+      observation,
+      adjustNature,
+      adjustMotif,
     },
-    ...(amputations.length ? { amputations } : {}),
   });
 
   return updated;
